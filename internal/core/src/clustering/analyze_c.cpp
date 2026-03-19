@@ -104,6 +104,7 @@ Analyze(CAnalyze* res_analyze,
             false,
             storage_config.max_connections,
             storage_config.tls_min_version,
+            storage_config.use_crc32c_checksum,
         });
 
         milvus::storage::FileManagerContext fileManagerContext(
