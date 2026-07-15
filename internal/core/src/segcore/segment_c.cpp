@@ -2141,8 +2141,9 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
         auto writer_result = milvus_storage::segment::SegmentWriter::Create(
             fs, arrow_schema, writer_config);
         if (!writer_result.ok()) {
-            return milvus::FailureCStatus(milvus::UnexpectedError,
-                                          writer_result.status().ToString());
+            auto error =
+                milvus_storage::ToSegcoreError(writer_result.status());
+            return milvus::FailureCStatus(&error);
         }
         auto writer = std::move(writer_result).ValueOrDie();
 
@@ -2230,8 +2231,8 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 arrow::RecordBatch::Make(arrow_schema, batch_rows, arrays);
             auto write_status = writer->Write(batch);
             if (!write_status.ok()) {
-                return milvus::FailureCStatus(milvus::UnexpectedError,
-                                              write_status.ToString());
+                auto error = milvus_storage::ToSegcoreError(write_status);
+                return milvus::FailureCStatus(&error);
             }
 
             current_offset += batch_rows;
@@ -2241,8 +2242,9 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
         // close writer — returns ColumnGroups + LobFiles, does NOT commit
         auto close_result = writer->Close();
         if (!close_result.ok()) {
-            return milvus::FailureCStatus(milvus::UnexpectedError,
-                                          close_result.status().ToString());
+            auto error =
+                milvus_storage::ToSegcoreError(close_result.status());
+            return milvus::FailureCStatus(&error);
         }
         auto output = std::move(close_result).ValueOrDie();
         if (rows_written > 0 && !has_timestamp) {
@@ -2327,16 +2329,17 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 milvus_storage::api::transaction::OverwriteResolver,
                 retry_limit);
         if (!transaction_result.ok()) {
-            return milvus::FailureCStatus(
-                milvus::UnexpectedError,
-                transaction_result.status().ToString());
+            auto error =
+                milvus_storage::ToSegcoreError(transaction_result.status());
+            return milvus::FailureCStatus(&error);
         }
         auto transaction = std::move(transaction_result).ValueOrDie();
 
         auto manifest_result = transaction->GetManifest();
         if (!manifest_result.ok()) {
-            return milvus::FailureCStatus(milvus::UnexpectedError,
-                                          manifest_result.status().ToString());
+            auto error =
+                milvus_storage::ToSegcoreError(manifest_result.status());
+            return milvus::FailureCStatus(&error);
         }
         auto manifest = manifest_result.ValueOrDie();
 
@@ -2366,8 +2369,8 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 fmt::format("{}/{}", writer_config.segment_path, rel_path);
             auto write_status = WriteRawFile(fs, full_path, serialized);
             if (!write_status.ok()) {
-                return milvus::FailureCStatus(milvus::UnexpectedError,
-                                              write_status.ToString());
+                auto error = milvus_storage::ToSegcoreError(write_status);
+                return milvus::FailureCStatus(&error);
             }
             stat_entry.paths.push_back(full_path);
 
@@ -2396,9 +2399,9 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 for (const auto& existing_path : paths_to_merge) {
                     auto existing_result = ReadBM25StatsFile(fs, existing_path);
                     if (!existing_result.ok()) {
-                        return milvus::FailureCStatus(
-                            milvus::UnexpectedError,
-                            existing_result.status().ToString());
+                        auto error = milvus_storage::ToSegcoreError(
+                            existing_result.status());
+                        return milvus::FailureCStatus(&error);
                     }
                     merged_stats.Merge(existing_result.ValueOrDie());
                 }
@@ -2412,8 +2415,8 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 write_status =
                     WriteRawFile(fs, merged_full_path, merged_serialized);
                 if (!write_status.ok()) {
-                    return milvus::FailureCStatus(milvus::UnexpectedError,
-                                                  write_status.ToString());
+                    auto error = milvus_storage::ToSegcoreError(write_status);
+                    return milvus::FailureCStatus(&error);
                 }
                 stat_entry.paths.push_back(merged_full_path);
                 memory_size += merged_serialized.size();
@@ -2426,8 +2429,9 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
         // commit
         auto commit_result = transaction->Commit();
         if (!commit_result.ok()) {
-            return milvus::FailureCStatus(milvus::UnexpectedError,
-                                          commit_result.status().ToString());
+            auto error =
+                milvus_storage::ToSegcoreError(commit_result.status());
+            return milvus::FailureCStatus(&error);
         }
         auto committed_version = commit_result.ValueOrDie();
 
@@ -2461,7 +2465,7 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
 
         return milvus::SuccessCStatus();
     } catch (std::exception& e) {
-        return milvus::FailureCStatus(milvus::UnexpectedError, e.what());
+        return milvus::FailureCStatus(&e);
     }
 }
 

@@ -116,6 +116,7 @@ var segcoreCodeTable = map[int32]segcoreClass{
 	2034: {sentinel: ErrSegcore, retriable: true}, // MemAllocateFailed: OOM
 	2036: {sentinel: ErrSegcore, retriable: true}, // MmapError
 	2043: {sentinel: ErrSegcore, retriable: true}, // InsufficientResource
+	2045: {sentinel: ErrSegcore, retriable: true}, // StorageTransientError: retryable storage/network failure
 
 	// Permanent system errors registered explicitly so a future reader does not
 	// mistake them for "unclassified" and flip them to retriable. They map to the
@@ -124,6 +125,7 @@ var segcoreCodeTable = map[int32]segcoreClass{
 	2004: {sentinel: ErrSegcore}, // IndexBuildError: build failed (bad data / permanent)
 	2016: {sentinel: ErrSegcore}, // BucketInvalid: misconfigured bucket (same on every replica)
 	2017: {sentinel: ErrSegcore}, // ObjectNotExist: object missing in shared storage (reroute won't help)
+	2044: {sentinel: ErrSegcore}, // StorageError: permanent storage failure
 
 	// Previously-unclassified C++ codes registered explicitly (review §2): an
 	// unknown code still falls back to non-retriable ErrSegcore, but registering
