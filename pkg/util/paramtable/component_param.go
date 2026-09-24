@@ -409,6 +409,8 @@ type commonConfig struct {
 	StoragePathPrefix                  ParamItem `refreshable:"false"`
 	StorageZstdConcurrency             ParamItem `refreshable:"false"`
 	StorageReadRetryAttempts           ParamItem `refreshable:"true"`
+	StorageRuntimeCPUThreads           ParamItem `refreshable:"false"`
+	StorageRuntimeIOThreads            ParamItem `refreshable:"false"`
 	StorageIopsInitialRate             ParamItem `refreshable:"false"`
 	StorageIopsMaxRate                 ParamItem `refreshable:"false"`
 	StorageTalonMode                   ParamItem `refreshable:"false"`
@@ -1395,6 +1397,42 @@ Rows whose child elements are all null are always promoted to row-level null for
 		Export: true,
 	}
 	p.ExternalVectorPartialNullPolicy.Init(base.mgr)
+
+	p.StorageRuntimeCPUThreads = ParamItem{
+		Key:          "common.storage.runtime.cpuThreads",
+		Version:      "3.0.1",
+		DefaultValue: "0",
+		Doc: "Arrow CPU pool capacity and Tokio worker threads for milvus-storage. " +
+			"Set both runtime thread counts to positive values, or leave both at 0 to keep existing defaults. Requires a restart.",
+		Formatter: func(value string) string {
+			// Arrow pool capacities are signed 32-bit integers.
+			threads, err := strconv.ParseUint(value, 10, 31)
+			if err != nil {
+				panic(fmt.Sprintf("invalid common.storage.runtime.cpuThreads: %q", value))
+			}
+			return strconv.FormatUint(threads, 10)
+		},
+		Export: true,
+	}
+	p.StorageRuntimeCPUThreads.Init(base.mgr)
+
+	p.StorageRuntimeIOThreads = ParamItem{
+		Key:          "common.storage.runtime.ioThreads",
+		Version:      "3.0.1",
+		DefaultValue: "0",
+		Doc: "Arrow IO pool capacity and Tokio blocking thread limit for milvus-storage. " +
+			"Set both runtime thread counts to positive values, or leave both at 0 to keep existing defaults. " +
+			"When set, takes precedence over common.arrow.ioThreadPoolCoefficient and ioThreadPoolMaxCapacity. Requires a restart.",
+		Formatter: func(value string) string {
+			threads, err := strconv.ParseUint(value, 10, 31)
+			if err != nil {
+				panic(fmt.Sprintf("invalid common.storage.runtime.ioThreads: %q", value))
+			}
+			return strconv.FormatUint(threads, 10)
+		},
+		Export: true,
+	}
+	p.StorageRuntimeIOThreads.Init(base.mgr)
 
 	p.StorageTalonMode = ParamItem{
 		Key:          "common.storage.talon.mode",

@@ -145,6 +145,20 @@ func callWithTimeout(fn func(), timeoutHandler func(), timeout time.Duration) {
 	}
 }
 
+// InitStorageRuntime must run once before components can use the Rust bridge.
+func InitStorageRuntime(params *paramtable.ComponentParam) error {
+	cpuThreads := params.CommonCfg.StorageRuntimeCPUThreads.GetAsUint32()
+	ioThreads := params.CommonCfg.StorageRuntimeIOThreads.GetAsUint32()
+	if cpuThreads == 0 && ioThreads == 0 {
+		return nil
+	}
+	if cpuThreads == 0 || ioThreads == 0 {
+		return merr.WrapErrParameterInvalidMsg("common.storage.runtime.cpuThreads and ioThreads must both be positive, or both be 0 to keep defaults")
+	}
+	status := C.InitStorageRuntime(C.uint32_t(cpuThreads), C.uint32_t(ioThreads))
+	return HandleCStatus(&status, "InitStorageRuntime failed")
+}
+
 func InitStorageV2FileSystem(params *paramtable.ComponentParam) error {
 	if params.CommonCfg.StorageType.GetValue() == "local" {
 		return initLocalArrowFileSystem(params.LocalStorageCfg.Path.GetValue(), params)

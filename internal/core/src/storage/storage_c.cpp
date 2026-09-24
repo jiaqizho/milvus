@@ -34,6 +34,7 @@
 #include "storage/Types.h"
 #include "storage/Util.h"
 #include "storage/loon_ffi/property_singleton.h"
+#include "milvus-storage/common/extend_status.h"
 #include "milvus-storage/thread_pool.h"
 
 CStatus
@@ -222,6 +223,21 @@ SetExternalVectorPartialNullAsRowNull(bool enabled) {
 bool
 GetExternalVectorPartialNullAsRowNull() {
     return milvus::storage::GetExternalVectorPartialNullAsRowNull();
+}
+
+CStatus
+InitStorageRuntime(const uint32_t cpu_threads, const uint32_t io_threads) {
+    try {
+        const auto status =
+            milvus_storage::ConfigureStorageRuntime(cpu_threads, io_threads);
+        if (!status.ok()) {
+            auto error = milvus_storage::ToSegcoreError(status);
+            return milvus::FailureCStatus(&error);
+        }
+        return milvus::SuccessCStatus();
+    } catch (std::exception& e) {
+        return milvus::FailureCStatus(&e);
+    }
 }
 
 CStatus

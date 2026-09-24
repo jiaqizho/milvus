@@ -1146,6 +1146,11 @@ common:
         threshold: 1024 # split by average size policy threshold(in bytes) in storage v2
     useLoonFFI: false
     enableGrowingSourceFlush: false # enable flushing growing segment payload from QueryNode growing source through StorageV3 manifest path
+    runtime:
+      # Process-wide storage runtime configuration; requires a restart.
+      # Leave both values at 0 to keep existing defaults, or set both to positive thread counts.
+      cpuThreads: 0 # Arrow CPU pool capacity and Tokio worker threads.
+      ioThreads: 0 # Arrow IO pool capacity and Tokio blocking thread limit; overrides common.arrow IO pool sizing when set.
     talon:
       # Remote milvus-storage reads: 0 = disabled, 1 = all reads, 2 = small reads only.
       # Applies to internal filesystems; local filesystems and legacy chunk managers are unaffected.

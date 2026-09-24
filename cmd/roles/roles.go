@@ -497,6 +497,13 @@ func (mr *MilvusRoles) Run() {
 	mr.setupLogger()
 	defer mlog.Cleanup()
 
+	// Configure once before starting components, which may initialize the
+	// shared Rust runtime concurrently in standalone mode.
+	if err := initcore.InitStorageRuntime(paramtable.Get()); err != nil {
+		mlog.Error(ctx, "failed to initialize storage runtime", mlog.Err(err))
+		return
+	}
+
 	// Worker nodes (querynode, datanode, streamingnode) host no credential
 	// metadata, so without this their management plane and pprof would answer
 	// 503 to root as well as to attackers once adminAuthEnabled is on. It takes

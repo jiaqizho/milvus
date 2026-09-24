@@ -118,11 +118,14 @@ func UpdateArrowIOThreadPoolCapacity(threads int) {
 }
 
 // ResolveArrowIOThreadPoolCapacity returns the effective arrow IO thread pool
-// size: coefficient × CPU cores, clamped by MaxCapacity when > 0. Returns 0
-// when the coefficient is unset, which signals the C++ side to keep arrow's
-// built-in default (8).
+// size. Explicit storage runtime IO threads take precedence; otherwise use
+// coefficient × CPU cores, clamped by MaxCapacity when > 0. Returns 0 when
+// the coefficient is unset, which keeps the current Arrow pool capacity.
 func ResolveArrowIOThreadPoolCapacity() int {
 	cfg := &paramtable.Get().CommonCfg
+	if threads := cfg.StorageRuntimeIOThreads.GetAsUint32(); threads > 0 {
+		return int(threads)
+	}
 	coef := cfg.ArrowIOThreadPoolCoefficient.GetAsFloat()
 	if coef <= 0 {
 		return 0

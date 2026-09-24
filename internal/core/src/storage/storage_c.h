@@ -56,6 +56,9 @@ bool
 GetExternalVectorPartialNullAsRowNull();
 
 CStatus
+InitStorageRuntime(uint32_t cpu_threads, uint32_t io_threads);
+
+CStatus
 InitLoonReaderThreadPool(int32_t num_threads);
 
 // Returns the effective loon reader thread pool size: the number of threads
