@@ -14,8 +14,8 @@
 # Update milvus-storage_VERSION for the first occurrence
 milvus_add_pkg_config("milvus-storage")
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY INCLUDE_DIRECTORIES "")
-# PR #702: remove-with-talon-flag
-set( milvus-storage_VERSION 7d70f7a3cb3886b47bb430d45329acee8aa37916)
+# PR #710: talon-metrics
+set( milvus-storage_VERSION 450fa24)
 set( GIT_REPOSITORY  "https://github.com/jiaqizho/milvus-storage.git")
 message(STATUS "milvus-storage repo: ${GIT_REPOSITORY}")
 message(STATUS "milvus-storage version: ${milvus-storage_VERSION}")
