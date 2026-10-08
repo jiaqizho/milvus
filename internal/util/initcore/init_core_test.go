@@ -461,3 +461,15 @@ func TestInitStorageV2FileSystem(t *testing.T) {
 	err = InitStorageV2FileSystem(paramtable.Get())
 	assert.NoError(t, err)
 }
+
+func TestInitStorageV2FileSystemUsesProvidedLocalConfig(t *testing.T) {
+	params := &paramtable.ComponentParam{}
+	params.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true), paramtable.SkipEnv(true), paramtable.Files(nil)))
+	assert.NoError(t, params.Save(params.CommonCfg.StorageType.Key, "local"))
+	assert.NoError(t, params.Save(params.CommonCfg.StorageTalonMode.Key, "3"))
+	// Invalid values supplied by the caller must be rejected, even when the
+	// global configuration has a valid default. This fails before entering C++.
+	assert.PanicsWithValue(t, `invalid common.storage.talon.mode: "3"`, func() {
+		_ = InitStorageV2FileSystem(params)
+	})
+}
