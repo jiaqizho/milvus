@@ -2448,6 +2448,7 @@ FlushGrowingSegmentData(CSegmentInterface c_segment,
                 fs,
                 writer_config.segment_path,
                 read_version,
+                -1,
                 milvus_storage::api::transaction::OverwriteResolver,
                 retry_limit);
         if (!transaction_result.ok()) {

@@ -56,6 +56,19 @@ const (
 	milvusTableSourceRowCountProperty     = "milvus_table.source_row_count"
 )
 
+// ManifestFilePath returns the complete object key for a published manifest.
+// Preserve the base path literally: remote keys may contain repeated separators.
+func ManifestFilePath(manifestPath string) (string, error) {
+	basePath, version, err := UnmarshalManifestPath(manifestPath)
+	if err != nil {
+		return "", merr.Wrap(err, "failed to parse manifest path")
+	}
+	if basePath == "" {
+		return "", merr.WrapErrServiceInternalMsg("manifest path %s has an empty base path", manifestPath)
+	}
+	return fmt.Sprintf("%s/_metadata/manifest-%d.avro", basePath, version), nil
+}
+
 // Fragment represents a data fragment from an external data source.
 // A large file (e.g., 10M rows) can be split into multiple fragments.
 type Fragment struct {
@@ -182,9 +195,9 @@ func CreateManifestForSegment(
 
 	// Begin transaction (read_version=0 for earliest, retry_limit=10)
 	var transactionHandle C.LoonTransactionHandle
-	result := C.loon_transaction_begin(cBasePath, cProperties, C.int64_t(0), C.LOON_TRANSACTION_RESOLVE_OVERWRITE /* resolve_id */, getRetryLimit() /* retry_limit */, &transactionHandle)
+	result := C.loon_transaction_open(cBasePath, cProperties, C.int64_t(0), C.int64_t(-1), C.LOON_TRANSACTION_RESOLVE_OVERWRITE /* resolve_id */, getRetryLimit() /* retry_limit */, &transactionHandle)
 	if err := HandleLoonFFIResult(result); err != nil {
-		return "", merr.WrapErrStorage(err, "loon_transaction_begin failed")
+		return "", merr.WrapErrStorage(err, "loon_transaction_open failed")
 	}
 	defer C.loon_transaction_destroy(transactionHandle)
 
@@ -196,7 +209,7 @@ func CreateManifestForSegment(
 
 	// Commit transaction
 	var committedVersion C.int64_t
-	result = C.loon_transaction_commit(transactionHandle, &committedVersion)
+	result = C.loon_transaction_commit(transactionHandle, &committedVersion, nil)
 	if err := HandleLoonFFIResult(result); err != nil {
 		return "", merr.WrapErrStorage(err, "loon_transaction_commit failed")
 	}
