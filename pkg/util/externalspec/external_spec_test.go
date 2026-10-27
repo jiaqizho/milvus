@@ -818,6 +818,48 @@ func TestParseExternalSpec_ArnKeys(t *testing.T) {
 	})
 }
 
+func TestValidateSourceAndSpec_AzureIAMAccount(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		source  string
+		extfs   string
+		wantErr string
+	}{
+		{
+			name:   "Azure IAM account name",
+			source: "azure://core.windows.net/container/path",
+			extfs:  `{"cloud_provider":"azure","region":"westus3","use_iam":"true","access_key_id":"mystorageacct"}`,
+		},
+		{
+			name:    "Azure account key still requires secret",
+			source:  "azure://core.windows.net/container/path",
+			extfs:   `{"cloud_provider":"azure","access_key_id":"mystorageacct"}`,
+			wantErr: "must be set together",
+		},
+		{
+			name:    "AWS IAM still rejects partial access keys",
+			source:  "s3://bucket/path",
+			extfs:   `{"cloud_provider":"aws","region":"us-west-2","use_iam":"true","access_key_id":"test-id"}`,
+			wantErr: "must be set together",
+		},
+		{
+			name:    "Azure IAM rejects an account key",
+			source:  "azure://core.windows.net/container/path",
+			extfs:   `{"cloud_provider":"azure","use_iam":"true","access_key_id":"mystorageacct","access_key_value":"unused"}`,
+			wantErr: "mutually exclusive",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateSourceAndSpec(tc.source, `{"format":"parquet","extfs":`+tc.extfs+`}`)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateExtfsComplete_Azure(t *testing.T) {
 	azureBrokerSpec := func() map[string]string {
 		return map[string]string{ //nolint:gosec // synthetic test values, not credentials

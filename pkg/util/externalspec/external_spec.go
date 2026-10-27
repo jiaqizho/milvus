@@ -434,7 +434,10 @@ func ValidateExtfsComplete(externalSource string, extfs map[string]string) error
 	}
 
 	hasAKSK := extfs[ExtfsKeyAccessKeyID] != "" && extfs[ExtfsKeyAccessKeyValue] != ""
-	hasAKOnly := !hasAzureBroker &&
+	// Azure uses access_key_id as its storage account name even with IAM.
+	hasAzureIAMAccount := cp == CloudProviderAzure && extfs[ExtfsKeyUseIAM] == "true" &&
+		extfs[ExtfsKeyAccessKeyValue] == ""
+	hasAKOnly := !hasAzureBroker && !hasAzureIAMAccount &&
 		((extfs[ExtfsKeyAccessKeyID] != "") != (extfs[ExtfsKeyAccessKeyValue] != ""))
 	hasRoleARN := extfs[ExtfsKeyRoleARN] != ""
 	hasUseIAMAlone := extfs[ExtfsKeyUseIAM] == "true" && !hasRoleARN
