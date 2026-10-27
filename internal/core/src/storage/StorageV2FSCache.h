@@ -52,6 +52,7 @@ class StorageV2FSCache {
         std::string talon_coordinator = "";
         uint32_t talon_block_size = 0;
         uint32_t talon_max_idle_per_addr = 0;
+        std::string talon_credential_endpoint = "";
     };
 
  public:

@@ -229,6 +229,10 @@ func makePropertiesFromConfig(storageConfig *indexpb.StorageConfig) (C.LoonPrope
 			keys = append(keys, "fs.talon.coordinator")
 			values = append(values, coordinator)
 		}
+		if endpoint := storageConfig.GetTalonCredentialEndpoint(); endpoint != "" && storageConfig.GetUseIAM() && storageConfig.GetTalonMode() != 0 {
+			keys = append(keys, "fs.credential_endpoint")
+			values = append(values, endpoint)
+		}
 	}
 
 	count := len(keys)

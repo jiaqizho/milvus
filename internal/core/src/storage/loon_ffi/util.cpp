@@ -180,6 +180,16 @@ MakeInternalPropertiesFromStorageConfig(CStorageConfig c_storage_config) {
         std::to_string(c_storage_config.talon_enable_for_external_table
                            ? c_storage_config.talon_mode
                            : 0);
+    if (c_storage_config.talon_credential_endpoint != nullptr &&
+        c_storage_config.talon_credential_endpoint[0] != '\0') {
+        const std::string endpoint(c_storage_config.talon_credential_endpoint);
+        // Local primary storage still supplies policy for remote External Tables.
+        (*properties_map)["milvus.talon.credential_endpoint"] = endpoint;
+        if (!is_local && c_storage_config.useIAM &&
+            c_storage_config.talon_mode != 0) {
+            (*properties_map)[PROPERTY_FS_CREDENTIAL_ENDPOINT] = endpoint;
+        }
+    }
     for (const auto& [key, value] : talon_values) {
         const bool is_mode = std::string_view(key) == PROPERTY_FS_TALON_MODE;
         if (!is_mode && value == 0) {
@@ -620,6 +630,11 @@ InjectExternalSpecProperties(
                         if (key == "cloud_provider" && val == "minio") {
                             continue;
                         }
+                        // Keep persisted external specs compatible with the
+                        // storage library's provider-neutral property name.
+                        if (key == "azure_credential_endpoint") {
+                            key = "credential_endpoint";
+                        }
                         milvus_storage::api::SetValue(
                             properties,
                             (extfs_prefix + key).c_str(),
@@ -783,6 +798,24 @@ InjectExternalSpecProperties(
         }
     }
 
+    // The shared Broker policy applies to the external source's own identity.
+    // Preserve explicit endpoints, including the legacy Azure alias above.
+    const auto credential_endpoint_key =
+        ExternalFsPropertyKey(extfs_prefix, PROPERTY_FS_CREDENTIAL_ENDPOINT);
+    const auto external_use_iam =
+        PropertyValueAsString(properties, (extfs_prefix + "use_iam").c_str());
+    const auto external_talon_mode = PropertyValueAsString(
+        properties, (extfs_prefix + "talon.mode").c_str());
+    if (external_use_iam == "true" && external_talon_mode.has_value() &&
+        *external_talon_mode != "0" &&
+        properties.count(credential_endpoint_key) == 0) {
+        const auto endpoint = PropertyValueAsString(
+            properties, "milvus.talon.credential_endpoint");
+        if (endpoint.has_value()) {
+            properties[credential_endpoint_key] = *endpoint;
+        }
+    }
+
     // Format-layer: emit per-format properties derived from spec.format.
     // Currently only Iceberg-table → reader.exttable.snapshot_id. Future formats
     // (Lance version, Iceberg branch, etc.) land here.
@@ -894,7 +927,8 @@ ToCStorageConfig(const milvus::storage::StorageConfig& config) {
                           config.talon_coordinator.c_str(),
                           config.talon_block_size,
                           config.talon_max_idle_per_addr,
-                          config.talon_enable_for_external_table};
+                          config.talon_enable_for_external_table,
+                          config.talon_credential_endpoint.c_str()};
 }
 
 std::shared_ptr<milvus_storage::api::Manifest>

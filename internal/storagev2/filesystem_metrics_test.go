@@ -67,9 +67,12 @@ func TestGetFilesystemMetricsWithConfig(t *testing.T) {
 // one metrics entry whose display key names that root.
 func TestListFilesystemMetrics(t *testing.T) {
 	for _, dir := range []string{t.TempDir(), t.TempDir()} {
-		fsMetrics, err := GetFilesystemMetricsWithConfig(&indexpb.StorageConfig{
-			StorageType: "local",
-			RootPath:    dir,
+		fsMetrics, err := GetFilesystemMetricsWithConfig(&indexpb.StorageConfig{ // #nosec G101 -- synthetic Broker URL; local filesystems do not use Broker credentials.
+			StorageType:             "local",
+			RootPath:                dir,
+			UseIAM:                  true,
+			TalonMode:               2,
+			TalonCredentialEndpoint: "https://broker.example.com/credentials",
 		})
 		require.NoError(t, err)
 		require.NotNil(t, fsMetrics)

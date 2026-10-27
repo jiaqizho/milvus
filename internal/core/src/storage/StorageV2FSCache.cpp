@@ -66,6 +66,11 @@ StorageV2FSCache::Get(const Key& key) {
     if (key.storage_type != "local") {
         props[PROPERTY_FS_TALON_MODE] = key.talon_mode;
         props[PROPERTY_FS_TALON_COORDINATOR] = key.talon_coordinator;
+        if (key.useIAM && key.talon_mode != 0 &&
+            !key.talon_credential_endpoint.empty()) {
+            props[PROPERTY_FS_CREDENTIAL_ENDPOINT] =
+                key.talon_credential_endpoint;
+        }
         if (key.talon_small_read_threshold > 0) {
             props[PROPERTY_FS_TALON_SMALL_READ_THRESHOLD] =
                 key.talon_small_read_threshold;

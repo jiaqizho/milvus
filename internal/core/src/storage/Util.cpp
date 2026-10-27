@@ -1304,6 +1304,7 @@ CreateChunkManager(const StorageConfig& storage_config) {
 StorageV2FSCache::Key
 ToStorageV2FSCacheKey(const StorageConfig& storage_config) {
     StorageV2FSCache::Key conf;
+    conf.talon_credential_endpoint = storage_config.talon_credential_endpoint;
     if (storage_config.storage_type == "local") {
         std::string path(storage_config.root_path);
         conf.root_path = path;

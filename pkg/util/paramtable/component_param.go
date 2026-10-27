@@ -441,6 +441,7 @@ type commonConfig struct {
 	StorageTalonEnableForExternalTable  ParamItem `refreshable:"false"`
 	StorageTalonSmallReadThreshold      ParamItem `refreshable:"false"`
 	StorageTalonCoordinator             ParamItem `refreshable:"false"`
+	StorageTalonCredentialEndpoint      ParamItem `refreshable:"false"`
 	StorageTalonBlockSize               ParamItem `refreshable:"false"`
 	StorageTalonMaxIdlePerAddr          ParamItem `refreshable:"false"`
 	ExternalVectorPartialNullPolicy     ParamItem `refreshable:"false"`
@@ -1581,6 +1582,15 @@ Rows whose child elements are all null are always promoted to row-level null for
 		Export:       true,
 	}
 	p.StorageTalonCoordinator.Init(base.mgr)
+
+	p.StorageTalonCredentialEndpoint = ParamItem{
+		Key:          "common.storage.talon.credentialEndpoint",
+		Version:      "3.0.1",
+		DefaultValue: "",
+		Doc:          "Credential Broker endpoint for Talon IAM reads and prewarming. Empty uses the worker's configured credentials. External Tables retain their own IAM settings. Requires a restart.",
+		Sensitivity:  Sensitive,
+	}
+	p.StorageTalonCredentialEndpoint.Init(base.mgr)
 
 	p.StorageTalonBlockSize = ParamItem{
 		Key:          "common.storage.talon.blockSize",

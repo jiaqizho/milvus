@@ -116,6 +116,7 @@ func buildAnalyzeInfo(req *workerpb.AnalyzeRequest) *clusteringpb.AnalyzeInfo {
 		TalonMode:                   req.GetStorageConfig().GetTalonMode(),
 		TalonSmallReadThreshold:     req.GetStorageConfig().GetTalonSmallReadThreshold(),
 		TalonCoordinator:            req.GetStorageConfig().GetTalonCoordinator(),
+		TalonCredentialEndpoint:     req.GetStorageConfig().GetTalonCredentialEndpoint(),
 		TalonBlockSize:              req.GetStorageConfig().GetTalonBlockSize(),
 		TalonMaxIdlePerAddr:         req.GetStorageConfig().GetTalonMaxIdlePerAddr(),
 		TalonEnableForExternalTable: req.GetStorageConfig().GetTalonEnableForExternalTable(),

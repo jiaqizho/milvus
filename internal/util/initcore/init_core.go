@@ -170,6 +170,8 @@ func initLocalArrowFileSystem(path string, params *paramtable.ComponentParam) er
 	cRootPath := C.CString(path)
 	cStorageType := C.CString("local")
 	cTalonCoordinator := C.CString(params.CommonCfg.StorageTalonCoordinator.GetValue())
+	cTalonCredentialEndpoint := C.CString(params.CommonCfg.StorageTalonCredentialEndpoint.GetValue())
+	defer C.free(unsafe.Pointer(cTalonCredentialEndpoint))
 	defer C.free(unsafe.Pointer(cTalonCoordinator))
 	defer C.free(unsafe.Pointer(cRootPath))
 	defer C.free(unsafe.Pointer(cStorageType))
@@ -179,6 +181,7 @@ func initLocalArrowFileSystem(path string, params *paramtable.ComponentParam) er
 		talon_mode:                      C.uint32_t(params.CommonCfg.StorageTalonMode.GetAsUint32()),
 		talon_small_read_threshold:      C.uint32_t(params.CommonCfg.StorageTalonSmallReadThreshold.GetAsUint32()),
 		talon_coordinator:               cTalonCoordinator,
+		talon_credential_endpoint:       cTalonCredentialEndpoint,
 		talon_block_size:                C.uint32_t(params.CommonCfg.StorageTalonBlockSize.GetAsUint32()),
 		talon_max_idle_per_addr:         C.uint32_t(params.CommonCfg.StorageTalonMaxIdlePerAddr.GetAsUint32()),
 		talon_enable_for_external_table: C.bool(params.CommonCfg.StorageTalonEnableForExternalTable.GetAsBool()),
@@ -202,6 +205,8 @@ func InitRemoteArrowFileSystem(params *paramtable.ComponentParam) error {
 	cGcpCredentialJSON := C.CString(params.MinioCfg.GcpCredentialJSON.GetValue())
 	cTLSMinVersion := C.CString(tlsMinVersionForStorage(params.MinioCfg.SslTLSMinVersion.GetValue()))
 	cTalonCoordinator := C.CString(params.CommonCfg.StorageTalonCoordinator.GetValue())
+	cTalonCredentialEndpoint := C.CString(params.CommonCfg.StorageTalonCredentialEndpoint.GetValue())
+	defer C.free(unsafe.Pointer(cTalonCredentialEndpoint))
 	defer C.free(unsafe.Pointer(cTalonCoordinator))
 	defer C.free(unsafe.Pointer(cAddress))
 	defer C.free(unsafe.Pointer(cBucketName))
@@ -240,6 +245,7 @@ func InitRemoteArrowFileSystem(params *paramtable.ComponentParam) error {
 		talon_mode:                      C.uint32_t(params.CommonCfg.StorageTalonMode.GetAsUint32()),
 		talon_small_read_threshold:      C.uint32_t(params.CommonCfg.StorageTalonSmallReadThreshold.GetAsUint32()),
 		talon_coordinator:               cTalonCoordinator,
+		talon_credential_endpoint:       cTalonCredentialEndpoint,
 		talon_block_size:                C.uint32_t(params.CommonCfg.StorageTalonBlockSize.GetAsUint32()),
 		talon_max_idle_per_addr:         C.uint32_t(params.CommonCfg.StorageTalonMaxIdlePerAddr.GetAsUint32()),
 		talon_enable_for_external_table: C.bool(params.CommonCfg.StorageTalonEnableForExternalTable.GetAsBool()),
@@ -277,6 +283,8 @@ func InitRemoteChunkManager(params *paramtable.ComponentParam) error {
 	cGcpCredentialJSON := C.CString(params.MinioCfg.GcpCredentialJSON.GetValue())
 	cTLSMinVersion := C.CString(tlsMinVersionForStorage(params.MinioCfg.SslTLSMinVersion.GetValue()))
 	cTalonCoordinator := C.CString(params.CommonCfg.StorageTalonCoordinator.GetValue())
+	cTalonCredentialEndpoint := C.CString(params.CommonCfg.StorageTalonCredentialEndpoint.GetValue())
+	defer C.free(unsafe.Pointer(cTalonCredentialEndpoint))
 	defer C.free(unsafe.Pointer(cTalonCoordinator))
 	defer C.free(unsafe.Pointer(cAddress))
 	defer C.free(unsafe.Pointer(cBucketName))
@@ -314,6 +322,7 @@ func InitRemoteChunkManager(params *paramtable.ComponentParam) error {
 		talon_mode:                      C.uint32_t(params.CommonCfg.StorageTalonMode.GetAsUint32()),
 		talon_small_read_threshold:      C.uint32_t(params.CommonCfg.StorageTalonSmallReadThreshold.GetAsUint32()),
 		talon_coordinator:               cTalonCoordinator,
+		talon_credential_endpoint:       cTalonCredentialEndpoint,
 		talon_block_size:                C.uint32_t(params.CommonCfg.StorageTalonBlockSize.GetAsUint32()),
 		talon_max_idle_per_addr:         C.uint32_t(params.CommonCfg.StorageTalonMaxIdlePerAddr.GetAsUint32()),
 		talon_enable_for_external_table: C.bool(params.CommonCfg.StorageTalonEnableForExternalTable.GetAsBool()),

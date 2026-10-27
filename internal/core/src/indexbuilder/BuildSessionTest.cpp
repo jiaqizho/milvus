@@ -155,6 +155,7 @@ TEST_F(BuildSessionTest, ScalarAndTextManifestInputsKeepTalonConfiguration) {
             config->set_talon_block_size(456);
             config->set_talon_max_idle_per_addr(7);
             config->set_talon_enable_for_external_table(external_enabled);
+            config->set_talon_credential_endpoint("http://broker:9000");
             auto prepared = AdaptBuildIndexInfo(info, purpose);
             EXPECT_EQ(prepared.request.value_type,
                       text ? DataType::TEXT : DataType::VARCHAR);
@@ -180,6 +181,11 @@ TEST_F(BuildSessionTest, ScalarAndTextManifestInputsKeepTalonConfiguration) {
                 *props, "milvus.talon.external_mode");
             ASSERT_TRUE(external.ok());
             EXPECT_EQ(*external, external_enabled ? "2" : "0");
+            auto broker = milvus_storage::api::GetValue<std::string>(
+                *props, "milvus.talon.credential_endpoint");
+            ASSERT_TRUE(broker.ok());
+            EXPECT_EQ(*broker, "http://broker:9000");
+            EXPECT_EQ(props->count(PROPERTY_FS_CREDENTIAL_ENDPOINT), 0u);
         }
     }
 }

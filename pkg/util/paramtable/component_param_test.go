@@ -291,6 +291,12 @@ func TestComponentParam_StorageTalonParams(t *testing.T) {
 	params := &ComponentParam{}
 	params.Init(NewBaseTable(SkipRemote(true), SkipEnv(true), Files(nil)))
 	assert.False(t, params.CommonCfg.StorageTalonEnableForExternalTable.GetAsBool())
+	endpoint := &params.CommonCfg.StorageTalonCredentialEndpoint
+	assert.Empty(t, endpoint.GetValue())
+	require.NoError(t, params.Save("common.storage.talon.credentialEndpoint", "http://broker:9000/credentials"))
+	assert.Equal(t, "http://broker:9000/credentials", endpoint.GetValue())
+	require.NoError(t, params.Reset(endpoint.Key))
+	assert.Empty(t, endpoint.GetValue())
 	assert.Equal(t, uint32(524288), params.CommonCfg.StorageTalonSmallReadThreshold.GetAsUint32())
 	for _, tc := range []struct {
 		item    *ParamItem

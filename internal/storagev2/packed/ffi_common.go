@@ -267,6 +267,15 @@ func MakePropertiesFromStorageConfig(storageConfig *indexpb.StorageConfig, extra
 		keys = append(keys, "fs.talon.coordinator")
 		values = append(values, coordinator)
 	}
+	if endpoint := storageConfig.GetTalonCredentialEndpoint(); endpoint != "" {
+		// External IAM storage can use the Broker even when inner storage is local.
+		keys = append(keys, "milvus.talon.credential_endpoint")
+		values = append(values, endpoint)
+		if storageConfig.GetStorageType() != "local" && storageConfig.GetUseIAM() && storageConfig.GetTalonMode() != 0 {
+			keys = append(keys, "fs.credential_endpoint")
+			values = append(values, endpoint)
+		}
+	}
 
 	// Add extra kvs (override existing keys if present)
 	for k, v := range extraKVs {

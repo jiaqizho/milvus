@@ -73,6 +73,7 @@ AdaptStorageConfig(const proto::indexcgo::StorageConfig& config) {
     result.talon_max_idle_per_addr = config.talon_max_idle_per_addr();
     result.talon_enable_for_external_table =
         config.talon_enable_for_external_table();
+    result.talon_credential_endpoint = config.talon_credential_endpoint();
     return result;
 }
 

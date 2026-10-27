@@ -289,12 +289,13 @@ func (suite *IndexBuildTaskSuite) TestMaxConnectionsReachesCreateIndex() {
 			Name:     "vec",
 			DataType: schemapb.DataType_FloatVector,
 		},
-		StorageConfig: &indexpb.StorageConfig{
+		StorageConfig: &indexpb.StorageConfig{ // #nosec G101 -- synthetic Broker URL used only to verify configuration forwarding.
 			StorageType:                 "minio",
 			MaxConnections:              237,
 			TalonMode:                   2,
 			TalonSmallReadThreshold:     65536,
 			TalonCoordinator:            "talon:7000",
+			TalonCredentialEndpoint:     "https://broker.example.com/credentials",
 			TalonBlockSize:              8388608,
 			TalonMaxIdlePerAddr:         32,
 			TalonEnableForExternalTable: true,
@@ -312,6 +313,7 @@ func (suite *IndexBuildTaskSuite) TestMaxConnectionsReachesCreateIndex() {
 	suite.Equal(uint32(2), captured.GetStorageConfig().GetTalonMode())
 	suite.Equal(uint32(65536), captured.GetStorageConfig().GetTalonSmallReadThreshold())
 	suite.Equal("talon:7000", captured.GetStorageConfig().GetTalonCoordinator())
+	suite.Equal("https://broker.example.com/credentials", captured.GetStorageConfig().GetTalonCredentialEndpoint())
 	suite.Equal(uint32(8388608), captured.GetStorageConfig().GetTalonBlockSize())
 	suite.Equal(uint32(32), captured.GetStorageConfig().GetTalonMaxIdlePerAddr())
 	suite.True(captured.GetStorageConfig().GetTalonEnableForExternalTable())
@@ -441,13 +443,14 @@ func (suite *AnalyzeTaskSuite) TestMaxConnectionsReachesAnalyze() {
 		FieldName:    "vec",
 		FieldType:    schemapb.DataType_FloatVector,
 		Dim:          128,
-		StorageConfig: &indexpb.StorageConfig{
+		StorageConfig: &indexpb.StorageConfig{ // #nosec G101 -- synthetic Broker URL used only to verify configuration forwarding.
 			StorageType:                 "minio",
 			RootPath:                    "files",
 			MaxConnections:              237,
 			TalonMode:                   2,
 			TalonSmallReadThreshold:     65536,
 			TalonCoordinator:            "talon:7000",
+			TalonCredentialEndpoint:     "https://broker.example.com/credentials",
 			TalonBlockSize:              8388608,
 			TalonMaxIdlePerAddr:         32,
 			TalonEnableForExternalTable: true,
@@ -467,6 +470,7 @@ func (suite *AnalyzeTaskSuite) TestMaxConnectionsReachesAnalyze() {
 	suite.Equal(uint32(2), captured.GetTalonMode())
 	suite.Equal(uint32(65536), captured.GetTalonSmallReadThreshold())
 	suite.Equal("talon:7000", captured.GetTalonCoordinator())
+	suite.Equal("https://broker.example.com/credentials", captured.GetTalonCredentialEndpoint())
 	suite.Equal(uint32(8388608), captured.GetTalonBlockSize())
 	suite.Equal(uint32(32), captured.GetTalonMaxIdlePerAddr())
 	suite.True(captured.GetTalonEnableForExternalTable())

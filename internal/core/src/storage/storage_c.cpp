@@ -117,6 +117,10 @@ InitRemoteChunkManagerSingleton(CStorageConfig c_storage_config) {
             c_storage_config.talon_max_idle_per_addr;
         storage_config.talon_enable_for_external_table =
             c_storage_config.talon_enable_for_external_table;
+        storage_config.talon_credential_endpoint =
+            c_storage_config.talon_credential_endpoint != nullptr
+                ? c_storage_config.talon_credential_endpoint
+                : "";
         milvus::storage::RemoteChunkManagerSingleton::GetInstance().Init(
             storage_config);
 

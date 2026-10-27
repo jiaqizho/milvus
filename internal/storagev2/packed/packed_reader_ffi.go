@@ -284,6 +284,7 @@ func newCStorageConfig(storageConfig *indexpb.StorageConfig) (C.CStorageConfig, 
 		talon_mode:                      C.uint32_t(storageConfig.GetTalonMode()),
 		talon_small_read_threshold:      C.uint32_t(storageConfig.GetTalonSmallReadThreshold()),
 		talon_coordinator:               C.CString(storageConfig.GetTalonCoordinator()),
+		talon_credential_endpoint:       C.CString(storageConfig.GetTalonCredentialEndpoint()),
 		talon_block_size:                C.uint32_t(storageConfig.GetTalonBlockSize()),
 		talon_max_idle_per_addr:         C.uint32_t(storageConfig.GetTalonMaxIdlePerAddr()),
 		talon_enable_for_external_table: C.bool(storageConfig.GetTalonEnableForExternalTable()),
@@ -303,6 +304,7 @@ func newCStorageConfig(storageConfig *indexpb.StorageConfig) (C.CStorageConfig, 
 		C.free(unsafe.Pointer(cStorageConfig.gcp_credential_json))
 		C.free(unsafe.Pointer(cStorageConfig.tls_min_version))
 		C.free(unsafe.Pointer(cStorageConfig.talon_coordinator))
+		C.free(unsafe.Pointer(cStorageConfig.talon_credential_endpoint))
 	}
 }
 

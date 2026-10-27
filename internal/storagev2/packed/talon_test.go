@@ -224,3 +224,44 @@ func TestTalonConstructorRejectsInvalidConfig(t *testing.T) {
 	_, err := NewTalonClient(&indexpb.StorageConfig{TalonCoordinator: "127.0.0.1:1"}, 0)
 	require.Error(t, err)
 }
+
+func TestTalonConstructorBrokerIAM(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		useIAM   bool
+		endpoint string
+		region   string
+		wantErr  bool
+	}{
+		{name: "IAM Broker", useIAM: true, endpoint: "http://127.0.0.1:1/credentials", region: "us-west-2"},
+		{name: "Broker requires source region", useIAM: true, endpoint: "http://127.0.0.1:1/credentials", wantErr: true},
+		{name: "IAM without Broker", useIAM: true},
+		{name: "non-IAM keeps worker credentials", endpoint: "http://127.0.0.1:1/credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := NewTalonClient(&indexpb.StorageConfig{
+				StorageType:             "remote",
+				Address:                 "s3.us-west-2.amazonaws.com",
+				BucketName:              "bucket",
+				CloudProvider:           "aws",
+				Region:                  tc.region,
+				UseIAM:                  tc.useIAM,
+				UseSSL:                  true,
+				RequestTimeoutMs:        3000,
+				TalonCoordinator:        "127.0.0.1:1",
+				TalonCredentialEndpoint: tc.endpoint,
+				// Raw prewarming uses Broker independently of filesystem routing.
+				TalonMode: 0,
+			}, 1)
+			if tc.wantErr {
+				if client != nil {
+					client.Close()
+				}
+				require.ErrorContains(t, err, "fs.region")
+				return
+			}
+			require.NoError(t, err)
+			client.Close()
+		})
+	}
+}

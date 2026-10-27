@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/bytedance/mockey"
 	"github.com/stretchr/testify/assert"
@@ -960,9 +961,11 @@ func TestMakePropertiesFromStorageConfig_Talon(t *testing.T) {
 				t.Run(storageType, func(t *testing.T) {
 					require.NoError(t, params.Save(params.CommonCfg.StorageType.Key, storageType))
 					require.NoError(t, params.Save(params.CommonCfg.StorageTalonMode.Key, tc.mode))
+					require.NoError(t, params.Save(params.CommonCfg.StorageTalonCredentialEndpoint.Key, "https://broker.example.com/credentials"))
 					config := CreateStorageConfig()
 					// The request configuration must not be overwritten by later process changes.
 					require.NoError(t, params.Save(params.CommonCfg.StorageTalonMode.Key, "0"))
+					require.NoError(t, params.Save(params.CommonCfg.StorageTalonCredentialEndpoint.Key, ""))
 					cConfig := GetCStorageConfig(config)
 					assert.Equal(t, config.GetTalonMode(), uint32(cConfig.talon_mode))
 					assert.Equal(t, config.GetTalonEnableForExternalTable(), bool(cConfig.talon_enable_for_external_table))
@@ -970,6 +973,7 @@ func TestMakePropertiesFromStorageConfig_Talon(t *testing.T) {
 					props, err := MakePropertiesFromStorageConfig(config, nil)
 					require.NoError(t, err)
 					defer FreeProperties(props)
+					assert.Equal(t, "https://broker.example.com/credentials", loonPropertyString(props, "milvus.talon.credential_endpoint"))
 					if storageType == "local" {
 						assert.Equal(t, "0", loonPropertyString(props, "fs.talon.mode"))
 					} else {
@@ -989,6 +993,50 @@ func TestMakePropertiesFromStorageConfig_Talon(t *testing.T) {
 					require.NoError(t, injectExternalSpecProperties(props, 42, "s3://bucket/data/", `{"format":"parquet","extfs":{"storage_type":"local"}}`))
 					assert.Empty(t, loonPropertyString(props, "extfs.42.talon.mode"))
 				})
+			}
+		})
+	}
+}
+
+func TestMakePropertiesFromStorageConfig_TalonCredentialEndpoint(t *testing.T) {
+	const endpoint = "https://broker.example.com/credentials"
+	for _, tc := range []struct {
+		name         string
+		storageType  string
+		useIAM       bool
+		mode         uint32
+		endpoint     string
+		wantEndpoint string
+	}{
+		{name: "remote_iam", storageType: "remote", useIAM: true, mode: 2, endpoint: endpoint, wantEndpoint: endpoint},
+		{name: "all_reads", storageType: "remote", useIAM: true, mode: 1, endpoint: endpoint, wantEndpoint: endpoint},
+		{name: "empty", storageType: "remote", useIAM: true, mode: 2},
+		{name: "non_iam", storageType: "remote", mode: 2, endpoint: endpoint},
+		{name: "disabled", storageType: "remote", useIAM: true, endpoint: endpoint},
+		{name: "local", storageType: "local", useIAM: true, mode: 2, endpoint: endpoint},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := &indexpb.StorageConfig{
+				StorageType:             tc.storageType,
+				UseIAM:                  tc.useIAM,
+				TalonMode:               tc.mode,
+				TalonCredentialEndpoint: tc.endpoint,
+			}
+			props, err := MakePropertiesFromStorageConfig(config, nil)
+			require.NoError(t, err)
+			defer FreeProperties(props)
+			assert.Equal(t, tc.endpoint, loonPropertyString(props, "milvus.talon.credential_endpoint"))
+			assert.Equal(t, tc.wantEndpoint, loonPropertyString(props, "fs.credential_endpoint"))
+
+			cConfig := GetCStorageConfig(config)
+			defer DeleteCStorageConfig(cConfig)
+			readerConfig, release := newCStorageConfig(config)
+			defer release()
+			for _, ptr := range []unsafe.Pointer{unsafe.Pointer(cConfig.talon_credential_endpoint), unsafe.Pointer(readerConfig.talon_credential_endpoint)} {
+				require.NotNil(t, ptr)
+				for i, want := range append([]byte(tc.endpoint), 0) {
+					require.Equal(t, want, *(*byte)(unsafe.Add(ptr, i)))
+				}
 			}
 		})
 	}

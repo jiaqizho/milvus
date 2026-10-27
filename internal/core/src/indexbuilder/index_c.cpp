@@ -104,6 +104,8 @@ get_storage_config(const milvus::proto::indexcgo::StorageConfig& config) {
     storage_config.talon_max_idle_per_addr = config.talon_max_idle_per_addr();
     storage_config.talon_enable_for_external_table =
         config.talon_enable_for_external_table();
+    storage_config.talon_credential_endpoint =
+        config.talon_credential_endpoint();
     return storage_config;
 }
 
