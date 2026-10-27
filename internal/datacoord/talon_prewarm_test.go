@@ -41,7 +41,7 @@ func TestManifestPrewarmURI(t *testing.T) {
 			if provider == "azure" {
 				scheme = "az"
 			}
-			resolve, err := manifestPrewarmResolver(provider, "bucket///")
+			resolve, err := manifestPrewarmResolver(provider, "bucket///", false)
 			require.NoError(t, err)
 			uri, err := resolve(descriptor)
 			require.NoError(t, err)
@@ -55,9 +55,9 @@ func TestManifestPrewarmURI(t *testing.T) {
 			require.Equal(t, merr.SystemError, merr.GetErrorType(err))
 		})
 	}
-	_, err := manifestPrewarmResolver("unsupported", "bucket")
+	_, err := manifestPrewarmResolver("unsupported", "bucket", false)
 	require.Error(t, err)
-	_, err = manifestPrewarmResolver("aws", "")
+	_, err = manifestPrewarmResolver("aws", "", false)
 	require.Error(t, err)
 }
 
@@ -115,25 +115,84 @@ func TestTalonPrewarmConfiguration(t *testing.T) {
 func TestTalonPrewarmUsesDataCoordConfiguration(t *testing.T) {
 	p := &paramtable.ComponentParam{}
 	p.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true)))
-	for key, value := range map[string]string{
-		"common.storageType":               "remote",
-		"common.storage.talon.coordinator": "coordinator:7000",
-		"minio.cloudProvider":              "aws",
-		"minio.bucketName":                 "bucket",
-		"dataCoord.talonPrewarm.enabled":   "true",
-		"dataCoord.talonPrewarm.interval":  "300",
-		"dataCoord.talonPrewarm.batchSize": "256",
+	for key, value := range map[string]string{ // #nosec G101 -- synthetic Broker URL; the test factory performs no credential exchange.
+		"common.storageType":                      "remote",
+		"common.storage.talon.coordinator":        "coordinator:7000",
+		"common.storage.talon.credentialEndpoint": "http://broker:9000/credentials",
+		"minio.address":                           "s3.us-west-2.amazonaws.com:443",
+		"minio.cloudProvider":                     "aws",
+		"minio.bucketName":                        "bucket",
+		"minio.region":                            "us-west-2",
+		"minio.useIAM":                            "true",
+		"minio.useSSL":                            "true",
+		"minio.useVirtualHost":                    "true",
+		"minio.requestTimeoutMs":                  "5678",
+		"dataCoord.talonPrewarm.enabled":          "true",
+		"dataCoord.talonPrewarm.interval":         "300",
+		"dataCoord.talonPrewarm.batchSize":        "256",
 	} {
 		require.NoError(t, p.Save(key, value))
 	}
 	factoryErr := merr.WrapErrServiceInternalMsg("Talon client unavailable")
-	_, err := newTalonPrewarm(context.Background(), p,
-		func(context.Context) ([]string, error) { return nil, nil },
-		func(*indexpb.StorageConfig, int) (TalonPrewarmClient, error) {
-			return nil, factoryErr
+	for _, storageType := range []string{"remote", "minio"} {
+		require.NoError(t, p.Save(p.CommonCfg.StorageType.Key, storageType))
+		_, err := newTalonPrewarm(context.Background(), p,
+			func(context.Context) ([]string, error) { return nil, nil },
+			func(config *indexpb.StorageConfig, _ int) (TalonPrewarmClient, error) {
+				require.Equal(t, "remote", config.GetStorageType())
+				require.Equal(t, "http://broker:9000/credentials", config.GetTalonCredentialEndpoint())
+				require.Equal(t, "s3.us-west-2.amazonaws.com:443", config.GetAddress())
+				require.Equal(t, "bucket", config.GetBucketName())
+				require.Equal(t, "aws", config.GetCloudProvider())
+				require.Equal(t, "us-west-2", config.GetRegion())
+				require.True(t, config.GetUseIAM())
+				require.True(t, config.GetUseSSL())
+				require.True(t, config.GetUseVirtualHost())
+				require.EqualValues(t, 5678, config.GetRequestTimeoutMs())
+				return nil, factoryErr
+			})
+		// Enabling the DC key must activate construction and preserve its failure.
+		require.ErrorIs(t, err, factoryErr)
+	}
+}
+
+func TestTalonPrewarmGCPBrokerURI(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		useIAM   string
+		endpoint string
+		scheme   string
+	}{
+		{name: "IAM Broker", useIAM: "true", endpoint: "http://broker:9000/credentials", scheme: "gcs"},
+		{name: "IAM without Broker", useIAM: "true", scheme: "s3"},
+		{name: "non-IAM", useIAM: "false", endpoint: "http://broker:9000/credentials", scheme: "s3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := &paramtable.ComponentParam{}
+			p.Init(paramtable.NewBaseTable(paramtable.SkipRemote(true), paramtable.SkipEnv(true), paramtable.Files(nil)))
+			for key, value := range map[string]string{
+				"common.storageType":                      "remote",
+				"common.storage.talon.coordinator":        "coordinator:7000",
+				"common.storage.talon.credentialEndpoint": tc.endpoint,
+				"minio.cloudProvider":                     "gcp",
+				"minio.bucketName":                        "bucket",
+				"minio.useIAM":                            tc.useIAM,
+				"dataCoord.talonPrewarm.enabled":          "true",
+			} {
+				require.NoError(t, p.Save(key, value))
+			}
+			inspector, err := newTalonPrewarm(context.Background(), p,
+				func(context.Context) ([]string, error) { return nil, nil },
+				func(*indexpb.StorageConfig, int) (TalonPrewarmClient, error) {
+					return &recordingTalonPrewarm{}, nil
+				})
+			require.NoError(t, err)
+			defer inspector.Stop()
+			uri, err := inspector.resolve(packed.MarshalManifestPath("files//literal/../segment", 17))
+			require.NoError(t, err)
+			require.Equal(t, tc.scheme+"://bucket/files//literal/../segment/_metadata/manifest-17.avro", uri)
 		})
-	// Enabling the DC key must activate construction and preserve its failure.
-	require.ErrorIs(t, err, factoryErr)
+	}
 }
 
 func TestTalonPrewarmDataCoordStartAfterHealthy(t *testing.T) {

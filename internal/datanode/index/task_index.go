@@ -326,6 +326,7 @@ func (it *indexBuildTask) Execute(ctx context.Context) error {
 		TalonMode:                   it.req.GetStorageConfig().GetTalonMode(),
 		TalonSmallReadThreshold:     it.req.GetStorageConfig().GetTalonSmallReadThreshold(),
 		TalonCoordinator:            it.req.GetStorageConfig().GetTalonCoordinator(),
+		TalonCredentialEndpoint:     it.req.GetStorageConfig().GetTalonCredentialEndpoint(),
 		TalonBlockSize:              it.req.GetStorageConfig().GetTalonBlockSize(),
 		TalonMaxIdlePerAddr:         it.req.GetStorageConfig().GetTalonMaxIdlePerAddr(),
 		TalonEnableForExternalTable: it.req.GetStorageConfig().GetTalonEnableForExternalTable(),

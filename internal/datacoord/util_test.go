@@ -223,6 +223,8 @@ func (suite *UtilSuite) TestGetCollectionAutoCompactionEnabled() {
 }
 
 func (suite *UtilSuite) TestCreateStorageConfig() {
+	paramtable.Get().Save(Params.CommonCfg.StorageTalonCredentialEndpoint.Key, "https://broker.example.com/credentials")
+	defer paramtable.Get().Reset(Params.CommonCfg.StorageTalonCredentialEndpoint.Key)
 	suite.Run("local", func() {
 		paramtable.Get().Save(Params.CommonCfg.StorageType.Key, "local")
 		paramtable.Get().Save(Params.LocalStorageCfg.Path.Key, "/tmp/milvus-local")
@@ -233,6 +235,7 @@ func (suite *UtilSuite) TestCreateStorageConfig() {
 
 		config := createStorageConfig()
 		suite.Equal("local", config.StorageType)
+		suite.Equal("https://broker.example.com/credentials", config.GetTalonCredentialEndpoint())
 		suite.Equal("/tmp/milvus-local", config.RootPath)
 		// An external collection can still read from s3:// while the primary
 		// storage is local, so the connection cap must survive this branch.
@@ -251,6 +254,7 @@ func (suite *UtilSuite) TestCreateStorageConfig() {
 
 		config := createStorageConfig()
 		suite.Equal("minio", config.StorageType)
+		suite.Equal("https://broker.example.com/credentials", config.GetTalonCredentialEndpoint())
 		suite.Equal(Params.MinioCfg.Address.GetValue(), config.Address)
 		suite.Equal("1.2", config.SslTlsMinVersion)
 		suite.True(config.UseCrc32CChecksum)

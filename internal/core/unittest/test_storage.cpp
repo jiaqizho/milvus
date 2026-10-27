@@ -1005,6 +1005,45 @@ TEST(StorageConfig, PackedWriterPreservesChecksum) {
     }
 }
 
+TEST(StorageTalonConfig, BrokerEndpointRequiresRemoteIAMAndTalon) {
+    StorageConfig input;
+    input.talon_credential_endpoint = "http://broker:9000/credentials";
+    input.talon_coordinator = "127.0.0.1:1";
+    for (const auto* storage_type : {"local", "remote"}) {
+        for (const bool use_iam : {false, true}) {
+            for (const uint32_t mode : {0, 1, 2}) {
+                input.storage_type = storage_type;
+                input.useIAM = use_iam;
+                input.talon_mode = mode;
+                const auto properties = MakeInternalPropertiesFromStorageConfig(
+                    ToCStorageConfig(input));
+                EXPECT_EQ(std::get<std::string>(properties->at(
+                              "milvus.talon.credential_endpoint")),
+                          "http://broker:9000/credentials");
+                const bool enabled =
+                    input.storage_type == "remote" && use_iam && mode != 0;
+                EXPECT_EQ(properties->count(PROPERTY_FS_CREDENTIAL_ENDPOINT),
+                          enabled ? 1u : 0u);
+                milvus_storage::ArrowFileSystemConfig resolved;
+                const auto status = milvus_storage::ArrowFileSystemConfig::
+                    create_file_system_config(*properties, resolved);
+                ASSERT_TRUE(status.ok()) << status.ToString();
+                EXPECT_EQ(resolved.credential_endpoint,
+                          enabled ? "http://broker:9000/credentials" : "");
+            }
+        }
+    }
+
+    const char* empty_endpoints[] = {nullptr, ""};
+    for (const char* endpoint : empty_endpoints) {
+        auto config = ToCStorageConfig(input);
+        config.talon_credential_endpoint = endpoint;
+        const auto properties = MakeInternalPropertiesFromStorageConfig(config);
+        EXPECT_EQ(properties->count("milvus.talon.credential_endpoint"), 0u);
+        EXPECT_EQ(properties->count(PROPERTY_FS_CREDENTIAL_ENDPOINT), 0u);
+    }
+}
+
 TEST(StorageTalonConfig, PropertiesFollowStorageConfig) {
     StorageConfig first;
     first.storage_type = "remote";

@@ -3241,6 +3241,70 @@ TEST(InjectExtfsAllowlist, NoBaselineLeakFromFsProperties) {
               "MILVUS_INTERNAL_AK");
 }
 
+TEST(InjectExtfsInheritedFields, BrokerUsesExternalIdentityAndMode) {
+    for (const auto* inner_storage_type : {"local", "remote"}) {
+        for (const bool inner_iam : {false, true}) {
+            for (const bool external_iam : {false, true}) {
+                for (const bool external_enabled : {false, true}) {
+                    CStorageConfig config{};
+                    config.storage_type = inner_storage_type;
+                    config.useIAM = inner_iam;
+                    config.talon_mode = 2;
+                    config.talon_enable_for_external_table = external_enabled;
+                    config.talon_credential_endpoint = "http://broker:9000";
+                    config.bucket_name = "inner-bucket";
+                    config.access_key_id = "INNER_AK";
+                    config.access_key_value = "INNER_SK";
+                    config.region = "inner-region";
+                    auto props =
+                        MakeInternalPropertiesFromStorageConfig(config);
+                    const auto spec =
+                        external_iam
+                            ? R"({"extfs":{"use_iam":"true","cloud_provider":"aws","region":"us-east-1"}})"
+                            : R"({"extfs":{"use_iam":"false","cloud_provider":"aws","region":"us-east-1"}})";
+
+                    ::InjectExternalSpecProperties(
+                        *props, 42, "s3://external-bucket/key", spec);
+
+                    EXPECT_EQ(
+                        std::get<std::string>(props->at("extfs.42.use_iam")),
+                        external_iam ? "true" : "false");
+                    EXPECT_EQ(std::get<std::string>(
+                                  props->at("extfs.42.bucket_name")),
+                              "external-bucket");
+                    EXPECT_EQ(
+                        std::get<std::string>(props->at("extfs.42.region")),
+                        "us-east-1");
+                    EXPECT_EQ(props->count("extfs.42.access_key_id"), 0u);
+                    EXPECT_EQ(props->count("extfs.42.access_key_value"), 0u);
+                    EXPECT_EQ(props->count("extfs.42.credential_endpoint"),
+                              external_iam && external_enabled ? 1u : 0u);
+                    if (external_iam && external_enabled) {
+                        EXPECT_EQ(std::get<std::string>(props->at(
+                                      "extfs.42.credential_endpoint")),
+                                  "http://broker:9000");
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(InjectExtfsInheritedFields, ExplicitAzureBrokerEndpointWins) {
+    milvus_storage::api::Properties props;
+    props["milvus.talon.external_mode"] = std::string("2");
+    props["milvus.talon.credential_endpoint"] =
+        std::string("http://shared-broker:9000");
+    const std::string spec =
+        R"({"extfs":{"use_iam":"true","cloud_provider":"azure","region":"eastus","access_key_id":"external-account","azure_credential_endpoint":"http://external-broker:9000"}})";
+
+    ::InjectExternalSpecProperties(props, 42, "azure://container/key", spec);
+
+    EXPECT_EQ(std::get<std::string>(props.at("extfs.42.credential_endpoint")),
+              "http://external-broker:9000");
+    EXPECT_EQ(props.count("extfs.42.azure_credential_endpoint"), 0u);
+}
+
 // minio.maxConnections must reach the external read path. milvus-storage
 // builds each external filesystem from its extfs.<name>.* keys alone, with no
 // fs.* fallback, so without this mirroring the setting is a silent no-op on
@@ -3445,9 +3509,9 @@ TEST(InjectExtfsAllowlist, AzureCredentialBrokerProperties) {
               "client");
     EXPECT_EQ(std::get<std::string>(props.at("extfs.42.azure_tenant_id")),
               "tenant");
-    EXPECT_EQ(
-        std::get<std::string>(props.at("extfs.42.azure_credential_endpoint")),
-        "https://broker.example.com/v1/credentials/assume-role");
+    EXPECT_EQ(std::get<std::string>(props.at("extfs.42.credential_endpoint")),
+              "https://broker.example.com/v1/credentials/assume-role");
+    EXPECT_EQ(props.count("extfs.42.azure_credential_endpoint"), 0u);
     EXPECT_EQ(props.count("extfs.42.access_key_value"), 0u);
     EXPECT_EQ(props.count("extfs.42.request_timeout_ms"), 0u);
 }

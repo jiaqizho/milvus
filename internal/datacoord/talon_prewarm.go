@@ -75,16 +75,27 @@ func newTalonPrewarm(ctx context.Context, p *paramtable.ComponentParam, supplier
 	if strings.TrimSpace(coordinator) == "" {
 		return nil, merr.WrapErrServiceInternalMsg("Talon prewarm requires common.storage.talon.coordinator")
 	}
-	resolve, err := manifestPrewarmResolver(p.MinioCfg.CloudProvider.GetValue(), p.MinioCfg.BucketName.GetValue())
+	credentialEndpoint := p.CommonCfg.StorageTalonCredentialEndpoint.GetValue()
+	useIAM := p.MinioCfg.UseIAM.GetAsBool()
+	resolve, err := manifestPrewarmResolver(p.MinioCfg.CloudProvider.GetValue(), p.MinioCfg.BucketName.GetValue(), credentialEndpoint != "" && useIAM)
 	if err != nil {
 		return nil, err
 	}
 	client, err := factory(&indexpb.StorageConfig{
-		BucketName:          p.MinioCfg.BucketName.GetValue(),
-		CloudProvider:       p.MinioCfg.CloudProvider.GetValue(),
-		TalonCoordinator:    coordinator,
-		TalonBlockSize:      p.CommonCfg.StorageTalonBlockSize.GetAsUint32(),
-		TalonMaxIdlePerAddr: p.CommonCfg.StorageTalonMaxIdlePerAddr.GetAsUint32(),
+		StorageType:             "remote",
+		Address:                 p.MinioCfg.Address.GetValue(),
+		BucketName:              p.MinioCfg.BucketName.GetValue(),
+		CloudProvider:           p.MinioCfg.CloudProvider.GetValue(),
+		Region:                  p.MinioCfg.Region.GetValue(),
+		AccessKeyID:             p.MinioCfg.AccessKeyID.GetValue(),
+		UseIAM:                  useIAM,
+		UseSSL:                  p.MinioCfg.UseSSL.GetAsBool(),
+		UseVirtualHost:          p.MinioCfg.UseVirtualHost.GetAsBool(),
+		RequestTimeoutMs:        p.MinioCfg.RequestTimeoutMs.GetAsInt64(),
+		TalonCoordinator:        coordinator,
+		TalonCredentialEndpoint: credentialEndpoint,
+		TalonBlockSize:          p.CommonCfg.StorageTalonBlockSize.GetAsUint32(),
+		TalonMaxIdlePerAddr:     p.CommonCfg.StorageTalonMaxIdlePerAddr.GetAsUint32(),
 	}, 1)
 	if err != nil {
 		return nil, merr.Wrap(err, "initialize Talon prewarm")
@@ -92,13 +103,17 @@ func newTalonPrewarm(ctx context.Context, p *paramtable.ComponentParam, supplier
 	return NewTalonPrewarmInspector(ctx, supplier, client, resolve, time.Duration(interval)*time.Second, int(batchSize)), nil
 }
 
-func manifestPrewarmResolver(provider, bucket string) (func(string) (string, error), error) {
+func manifestPrewarmResolver(provider, bucket string, useBroker bool) (func(string) (string, error), error) {
 	scheme := ""
 	switch provider {
 	case objectstorage.CloudProviderAWS, objectstorage.CloudProviderAliyun,
-		objectstorage.CloudProviderTencent, objectstorage.CloudProviderHuawei,
-		objectstorage.CloudProviderGCP:
+		objectstorage.CloudProviderTencent, objectstorage.CloudProviderHuawei:
 		scheme = packed.TalonSchemeS3
+	case objectstorage.CloudProviderGCP:
+		scheme = packed.TalonSchemeS3
+		if useBroker {
+			scheme = packed.TalonSchemeGCS
+		}
 	case objectstorage.CloudProviderAzure:
 		scheme = packed.TalonSchemeAzure
 	default:

@@ -35,7 +35,6 @@ import (
 	"context"
 	"runtime"
 	"runtime/cgo"
-	"strconv"
 	"sync"
 	"unsafe"
 
@@ -70,6 +69,7 @@ func handleTalonFFIResult(result C.LoonFFIResult) error {
 // Talon protocol, independently of the cloud provider name.
 const (
 	TalonSchemeS3    = "s3"
+	TalonSchemeGCS   = "gcs"
 	TalonSchemeAzure = "az"
 )
 
@@ -127,34 +127,19 @@ func NewTalonClient(config *indexpb.StorageConfig, concurrency int) (*TalonClien
 	if config == nil || config.GetTalonCoordinator() == "" || concurrency <= 0 {
 		return nil, merr.WrapErrServiceInternalMsg("Talon client requires coordinator and positive concurrency")
 	}
-	// Raw Talon needs no filesystem, credentials, or filesystem-routing mode.
-	keys := []string{"fs.talon.coordinator"}
-	values := []string{config.GetTalonCoordinator()}
-	for _, property := range []struct {
-		key   string
-		value uint32
-	}{
-		{"fs.talon.block_size", config.GetTalonBlockSize()},
-		{"fs.talon.max_idle_per_addr", config.GetTalonMaxIdlePerAddr()},
-	} {
-		if property.value > 0 {
-			keys = append(keys, property.key)
-			values = append(values, strconv.FormatUint(uint64(property.value), 10))
-		}
+	// Raw operations always use Talon, independently of filesystem read routing.
+	// Reuse the source properties so Broker identity matches ordinary reads.
+	overrides := map[string]string{"fs.talon.mode": "0"}
+	if endpoint := config.GetTalonCredentialEndpoint(); endpoint != "" && config.GetUseIAM() {
+		overrides["fs.credential_endpoint"] = endpoint
 	}
-	cKeys, cValues := make([]*C.char, len(keys)), make([]*C.char, len(keys))
-	for i := range keys {
-		cKeys[i], cValues[i] = C.CString(keys[i]), C.CString(values[i])
-		defer C.free(unsafe.Pointer(cKeys[i]))
-		defer C.free(unsafe.Pointer(cValues[i]))
-	}
-	var properties C.LoonProperties
-	if err := handleTalonFFIResult(C.loon_properties_create(&cKeys[0], &cValues[0], C.size_t(len(keys)), &properties)); err != nil {
+	properties, err := MakePropertiesFromStorageConfig(config, overrides)
+	if err != nil {
 		return nil, merr.Wrap(err, "create raw Talon properties")
 	}
-	defer C.loon_properties_free(&properties)
+	defer FreeProperties(properties)
 	client := &TalonClient{io: NewManifestIOContext(concurrency)}
-	if err := handleTalonFFIResult(C.loon_talon_client_create(&properties, &client.native)); err != nil {
+	if err := handleTalonFFIResult(C.loon_talon_client_create(properties, &client.native)); err != nil {
 		return nil, merr.Wrap(err, "create raw Talon client")
 	}
 	return client, nil
@@ -305,15 +290,16 @@ func (c *TalonClient) submit(ctx context.Context, request talonRequest) (<-chan 
 	})
 	mu.Lock()
 	var status C.LoonFFIResult
+	// Nil request options preserve the client's namespace and Broker defaults.
 	switch request.operation {
 	case C.LOON_TALON_READ:
-		status = C.loon_talon_read_async(c.io.native, c.native, cURI, C.uint64_t(request.read.Offset), C.uint64_t(request.read.Length), cVersion, cObjectSize, dst, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
+		status = C.loon_talon_read_async(c.io.native, c.native, cURI, C.uint64_t(request.read.Offset), C.uint64_t(request.read.Length), cVersion, cObjectSize, dst, nil, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
 	case C.LOON_TALON_LOAD:
-		status = C.loon_talon_load_async(c.io.native, c.native, &entries[0], (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
+		status = C.loon_talon_load_async(c.io.native, c.native, &entries[0], nil, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
 	case C.LOON_TALON_BATCH_LOAD:
-		status = C.loon_talon_batch_load_async(c.io.native, c.native, &entries[0], C.size_t(len(entries)), (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
+		status = C.loon_talon_batch_load_async(c.io.native, c.native, &entries[0], C.size_t(len(entries)), nil, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
 	case C.LOON_TALON_STAT:
-		status = C.loon_talon_stat_async(c.io.native, c.native, cURI, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
+		status = C.loon_talon_stat_async(c.io.native, c.native, cURI, nil, (C.LoonTalonCallback)(C.milvusTalonDone), C.uintptr_t(token), &operation)
 	}
 	if err := handleManifestAsyncResult(status); err != nil {
 		mu.Unlock()
