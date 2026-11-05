@@ -30,7 +30,6 @@
 #include <string>
 #include <vector>
 
-#include "aws/core/client/ClientConfiguration.h"
 #include "azure/storage/common/storage_exception.hpp"
 #include "common/EasyAssert.h"
 #include "common/FieldMeta.h"
@@ -61,18 +60,9 @@
 #include "storage/loon_ffi/property_singleton.h"
 #include "storage/loon_ffi/util.h"
 #include "storage/gcp-native-storage/GcpNativeChunkManager.h"
-#include "storage/minio/MinioChunkManager.h"
 #include "storage/storage_c.h"
 #include "test_utils/Constants.h"
 #include "test_utils/DataGen.h"
-
-// Test-only subclass that exposes the protected ApplyChecksumConfigOverrides
-// and NeedChecksumOverride helpers so we can assert their behavior directly.
-class TestableMinioChunkManager : public milvus::storage::MinioChunkManager {
- public:
-    using MinioChunkManager::ApplyChecksumConfigOverrides;
-    using MinioChunkManager::NeedChecksumOverride;
-};
 
 using namespace std;
 using namespace milvus;
@@ -192,53 +182,6 @@ TEST_F(StorageTest, ReadMediumTypeRejectsForeignMagicNumber) {
     // The valid magic number still parses.
     EXPECT_NO_THROW(milvus::storage::ReadMediumType(
         make_reader(milvus::storage::MAGIC_NUM)));
-}
-
-TEST_F(StorageTest, S3ErrorClassification) {
-    constexpr auto kNoCode = Aws::Http::HttpResponseCode::REQUEST_NOT_MADE;
-
-    // The transient-vs-permanent decision is delegated to the AWS SDK's
-    // ShouldRetry() flag (passed here as the bool): whatever the SDK marks
-    // retryable becomes the retriable S3Error, the rest UnexpectedError.
-    for (auto error : {Aws::S3::S3Errors::THROTTLING,
-                       Aws::S3::S3Errors::REQUEST_EXPIRED,
-                       Aws::S3::S3Errors::REQUEST_TIME_TOO_SKEWED}) {
-        EXPECT_EQ(S3ErrorToErrorCode(error, kNoCode, /*should_retry=*/true),
-                  ErrorCode::S3Error);
-    }
-    for (auto error : {Aws::S3::S3Errors::ACCESS_DENIED,
-                       Aws::S3::S3Errors::SIGNATURE_DOES_NOT_MATCH,
-                       Aws::S3::S3Errors::INVALID_REQUEST}) {
-        EXPECT_EQ(S3ErrorToErrorCode(error, kNoCode, /*should_retry=*/false),
-                  ErrorCode::UnexpectedError);
-    }
-
-    // Specific permanent codes are decided by error identity and ignore the
-    // retry flag (a NoSuchBucket must not be retried even if flagged retryable).
-    EXPECT_EQ(
-        S3ErrorToErrorCode(
-            Aws::S3::S3Errors::NO_SUCH_BUCKET, kNoCode, /*should_retry=*/true),
-        ErrorCode::BucketInvalid);
-    EXPECT_EQ(
-        S3ErrorToErrorCode(
-            Aws::S3::S3Errors::NO_SUCH_KEY, kNoCode, /*should_retry=*/true),
-        ErrorCode::ObjectNotExist);
-    EXPECT_EQ(S3ErrorToErrorCode(Aws::S3::S3Errors::RESOURCE_NOT_FOUND,
-                                 kNoCode,
-                                 /*should_retry=*/true),
-              ErrorCode::ObjectNotExist);
-
-    // UNKNOWN (unmappable, e.g. S3-compatible services) falls back to the HTTP
-    // status rather than the SDK retry flag.
-    EXPECT_EQ(
-        S3ErrorToErrorCode(Aws::S3::S3Errors::UNKNOWN,
-                           Aws::Http::HttpResponseCode::SERVICE_UNAVAILABLE,
-                           /*should_retry=*/false),
-        ErrorCode::S3Error);
-    EXPECT_EQ(S3ErrorToErrorCode(Aws::S3::S3Errors::UNKNOWN,
-                                 Aws::Http::HttpResponseCode::FORBIDDEN,
-                                 /*should_retry=*/false),
-              ErrorCode::UnexpectedError);
 }
 
 TEST_F(StorageTest, GcpNativeErrorClassification) {
@@ -1609,57 +1552,4 @@ TEST_F(StorageUtilTest, NormalizePath) {
     EXPECT_EQ(NormalizePath(boost::filesystem::path("a/b c/d")), "a/b c/d");
     EXPECT_EQ(NormalizePath(boost::filesystem::path("./.")), ".");
     EXPECT_EQ(NormalizePath(boost::filesystem::path("./..")), "..");
-}
-
-TEST(MinioChecksumConfig, OverridesAreWhenRequired) {
-    // Regression guard: AWS SDK C++ 1.11.x defaults the checksum policy to
-    // WHEN_SUPPORTED, which makes the V4 signer switch PutObject uploads to
-    // aws-chunked + STREAMING-UNSIGNED-PAYLOAD-TRAILER. Aliyun OSS rejects
-    // that combination (x-oss-ec=0017-00000804). MinioChunkManager must
-    // override both directions to WHEN_REQUIRED so the SDK only adds
-    // checksums when the operation model demands them.
-
-    // Aws::Client::ClientConfiguration's default ctor reads SDK globals
-    // (logger / http client factory) set up by Aws::InitAPI; without it the
-    // ctor segfaults. Use MinioChunkManager's idempotent init helper so we
-    // share init_count_ with any production code paths in the same binary.
-    // Balance this test's initialization after config is destroyed. Leaving
-    // CRT worker threads alive lets them log during shared-library teardown.
-    struct SdkGuard : TestableMinioChunkManager {
-        SdkGuard() {
-            InitSDKAPIDefault("info");
-        }
-        ~SdkGuard() override {
-            ShutdownSDKAPI();
-        }
-    } init_guard;
-
-    Aws::Client::ClientConfiguration config;
-    // Sanity check: the SDK defaults are WHEN_SUPPORTED for both directions.
-    EXPECT_EQ(config.checksumConfig.requestChecksumCalculation,
-              Aws::Client::RequestChecksumCalculation::WHEN_SUPPORTED);
-    EXPECT_EQ(config.checksumConfig.responseChecksumValidation,
-              Aws::Client::ResponseChecksumValidation::WHEN_SUPPORTED);
-
-    TestableMinioChunkManager::ApplyChecksumConfigOverrides(config);
-
-    EXPECT_EQ(config.checksumConfig.requestChecksumCalculation,
-              Aws::Client::RequestChecksumCalculation::WHEN_REQUIRED);
-    EXPECT_EQ(config.checksumConfig.responseChecksumValidation,
-              Aws::Client::ResponseChecksumValidation::WHEN_REQUIRED);
-}
-
-TEST(MinioChecksumConfig, NeedChecksumOverrideDispatch) {
-    using Mgr = TestableMinioChunkManager;
-
-    // Non-AWS S3-compatible backends need the override.
-    EXPECT_TRUE(Mgr::NeedChecksumOverride("gcp"));
-    EXPECT_TRUE(Mgr::NeedChecksumOverride("aliyun"));
-    EXPECT_TRUE(Mgr::NeedChecksumOverride("tencent"));
-    EXPECT_TRUE(Mgr::NeedChecksumOverride("huawei"));
-
-    // AWS S3 / MinIO accept the default WHEN_SUPPORTED behavior.
-    EXPECT_FALSE(Mgr::NeedChecksumOverride("aws"));
-    EXPECT_FALSE(Mgr::NeedChecksumOverride(""));
-    EXPECT_FALSE(Mgr::NeedChecksumOverride("unknown"));
 }

@@ -64,6 +64,10 @@ class StorageV2FSCache {
     milvus_storage::ArrowFileSystemPtr
     Get(const Key& key);
 
+    // Required filesystems must preserve the producer's original error.
+    arrow::Result<milvus_storage::ArrowFileSystemPtr>
+    GetWithStatus(const Key& key);
+
     virtual ~StorageV2FSCache() = default;
 };
 }  // namespace milvus::storage

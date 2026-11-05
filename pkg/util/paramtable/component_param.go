@@ -878,10 +878,8 @@ This configuration is only used by querynode and indexnode, it selects CPU instr
 		Key:          "common.storage.useArrowFileSystemChunkManager",
 		Version:      "3.0.1",
 		DefaultValue: "false",
-		Doc: "Whether segcore routes chunk manager IO (segment load, index build/load) " +
-			"through the milvus-storage Arrow FileSystem, unified with storage v2. " +
-			"Applies to both remote and local storage types; when false, the legacy chunk managers are used. " +
-			"Not effective for cloudProvider=gcpnative, which always uses the legacy implementation.",
+		Doc: "Select the milvus-storage Arrow FileSystem chunk manager for Azure. " +
+			"S3-compatible providers always use milvus-storage; local and gcpnative keep their own chunk managers.",
 		Export: true,
 	}
 	p.UseArrowFSChunkManager.Init(base.mgr)

@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <new>
 
 #include "arrow/filesystem/filesystem.h"
 #include "arrow/util/io_util.h"
@@ -29,6 +30,9 @@
 #include "prometheus/histogram.h"
 #include "storage/StorageV2FSCache.h"
 #include "storage/Util.h"
+#ifdef AZURE_BUILD_DIR
+#include "storage/azure/AzureChunkManager.h"
+#endif
 
 namespace milvus::storage {
 
@@ -67,32 +71,6 @@ ThrowArrowStorageError(const std::string& func,
     throw SegcoreError(segcore_error.get_error_code(), error_message);
 }
 
-// Classify-and-throw for read-side failures: the S3 backend surfaces a
-// missing object lazily (open succeeds, the first Read fails), so every
-// read-side error branch needs the not-found recheck, not just open.
-//
-// Decide a genuine miss via the legacy delegate's HeadObject exact-object
-// existence, not a dir-aware arrow GetFileInfo re-stat (which would report a
-// phantom Directory for a `key/` marker or a child object). The delegate is
-// always the remote legacy chunk manager (see Make), so its Exist matches the
-// object keys the Arrow data plane reads.
-[[noreturn]] void
-ThrowReadError(const ChunkManagerPtr& delegate,
-               const std::string& func,
-               const std::string& path,
-               const arrow::Status& status) {
-    if (IsArrowNotFound(status) || !delegate->Exist(path)) {
-        std::string error_message =
-            fmt::format("Error in {}[filepath:{}, errmessage:{}]",
-                        func,
-                        path,
-                        status.ToString());
-        LOG_WARN("{}", error_message);
-        throw SegcoreError(ObjectNotExist, error_message);
-    }
-    ThrowArrowStorageError(func, path, status);
-}
-
 class LatencyObserver {
  public:
     explicit LatencyObserver(prometheus::Histogram& histogram)
@@ -114,71 +92,198 @@ class LatencyObserver {
 
 ChunkManagerPtr
 ArrowFileSystemChunkManager::Make(const StorageConfig& storage_config) {
-    if (storage_config.storage_type == "local") {
-        // Local disk IO stays on LocalChunkManager: routing it through an
-        // object-store filesystem buys nothing and hits none of the flat-object
-        // concerns. Fall back (nullptr) to the legacy chunk managers.
-        return nullptr;
-    }
-    auto key = ToStorageV2FSCacheKey(storage_config);
-    milvus_storage::ArrowFileSystemPtr fs;
     try {
-        fs = StorageV2FSCache::Instance().Get(key);
-    } catch (const std::exception& e) {
-        // Producers mostly report an unsupported/failed filesystem via
-        // arrow::Status (-> nullptr below), but some paths throw raw
-        // exceptions (e.g. endpoint parsing). Either way the config cannot
-        // produce a filesystem: fall back to the legacy chunk managers
-        // rather than failing the caller.
-        LOG_WARN(
-            "arrow filesystem unavailable for chunk manager ({}), storage "
-            "config: {}",
-            e.what(),
-            storage_config.ToString());
-        return nullptr;
+        auto key = ToStorageV2FSCacheKey(storage_config);
+        // An omitted provider historically selected the generic S3 client.
+        if (key.cloud_provider.empty()) {
+            key.cloud_provider = "aws";
+        }
+        auto fs = StorageV2FSCache::Instance().GetWithStatus(key);
+        if (!fs.ok()) {
+            // Invalid here describes server configuration, not persisted data.
+            if (fs.status().IsInvalid()) {
+                ThrowInfo(ConfigInvalid,
+                          "create chunk manager: {}",
+                          fs.status().ToString());
+            }
+            ThrowArrowStorageError(
+                "CreateChunkManager", key.bucket_name, fs.status());
+        }
+        ChunkManagerPtr azure_delegate;
+#ifdef AZURE_BUILD_DIR
+        if (storage_config.cloud_provider == "azure") {
+            azure_delegate =
+                std::make_shared<AzureChunkManager>(storage_config);
+        }
+#endif
+        return std::make_shared<ArrowFileSystemChunkManager>(
+            *fs,
+            storage_config.bucket_name,
+            storage_config.root_path,
+            std::move(azure_delegate));
+    } catch (const SegcoreError&) {
+        throw;
+    } catch (const std::bad_alloc&) {
+        throw;
+    } catch (const std::exception& error) {
+        // Some provider constructors throw instead of returning arrow::Status.
+        // Preserve their message and keep the failure in the storage family.
+        ThrowInfo(StorageError, "create chunk manager: {}", error.what());
     }
-    if (fs == nullptr) {
-        // milvus-storage has no producer for this config (unknown / empty /
-        // gcpnative cloud provider, or a config its filesystem layer rejects).
-        // Fall back to the legacy chunk managers.
-        LOG_WARN(
-            "arrow filesystem unavailable for chunk manager, storage "
-            "config: {}",
-            storage_config.ToString());
-        return nullptr;
-    }
-    LOG_INFO(
-        "init ArrowFileSystemChunkManager with "
-        "parameter[endpoint={}][bucket_name={}][root_path={}][use_secure={}]",
-        storage_config.address,
-        storage_config.bucket_name,
-        storage_config.root_path,
-        storage_config.useSSL);
-
-    // Reuse a legacy chunk manager for the control plane
-    // (Exist/Size/ListWithPrefix/Remove). Its constructor runs the network
-    // PreCheck, so a misconfigured but *supported* provider fails fast here --
-    // the exception propagates out of Make to CreateChunkManager and aborts
-    // node init -- instead of silently falling back. An *unsupported* provider
-    // already returned nullptr above (fs == nullptr) and never reaches this
-    // point, so it still falls back to the legacy managers.
-    auto delegate = CreateLegacyChunkManager(storage_config);
-    return std::shared_ptr<ArrowFileSystemChunkManager>(
-        new ArrowFileSystemChunkManager(std::move(fs),
-                                        std::move(delegate),
-                                        storage_config.bucket_name,
-                                        storage_config.root_path));
 }
 
 ArrowFileSystemChunkManager::ArrowFileSystemChunkManager(
     milvus_storage::ArrowFileSystemPtr fs,
-    ChunkManagerPtr delegate,
     std::string bucket_name,
-    std::string root_path)
+    std::string root_path,
+    ChunkManagerPtr azure_delegate)
     : fs_(std::move(fs)),
-      delegate_(std::move(delegate)),
+      azure_delegate_(std::move(azure_delegate)),
       default_bucket_name_(std::move(bucket_name)),
       remote_root_path_(std::move(root_path)) {
+    if (azure_delegate_) {
+        return;
+    }
+    // Keep the startup LIST probe, without enumerating the actual data prefix.
+    // allow_not_found=true would also swallow a missing bucket. In the S3 FS,
+    // an empty prefix produces ENOENT, while a failed LIST retains the backend
+    // ExtendStatusDetail (including NoSuchBucket).
+    arrow::fs::FileSelector probe;
+    probe.base_dir = remote_root_path_.empty()
+                         ? "justforconnectioncheck"
+                         : remote_root_path_ + "/justforconnectioncheck";
+    probe.allow_not_found = false;
+    auto result = fs_->GetFileInfo(probe);
+    if (!result.ok() &&
+        !(arrow::internal::ErrnoFromStatus(result.status()) == ENOENT &&
+          !milvus_storage::ExtendStatusDetail::UnwrapStatus(result.status()))) {
+        if (result.status().IsInvalid()) {
+            ThrowInfo(ConfigInvalid,
+                      "chunk manager startup probe: {}",
+                      result.status().ToString());
+        }
+        ThrowArrowStorageError("PreCheck", probe.base_dir, result.status());
+    }
+}
+
+arrow::Result<int64_t>
+ArrowFileSystemChunkManager::GetObjectSize(const std::string& filepath) {
+    // GetFileInfo also recognizes implicit directories. OpenInputFile/GetSize
+    // instead issues HEAD for this exact object, without a directory LIST.
+    ARROW_ASSIGN_OR_RAISE(auto file, fs_->OpenInputFile(filepath));
+    auto size = file->GetSize();
+    const auto close_status = file->Close();
+    // Close the handle on both paths, preserving the original HEAD error.
+    if (!size.ok()) {
+        return size.status();
+    }
+    ARROW_RETURN_NOT_OK(close_status);
+    return size;
+}
+
+uint64_t
+ArrowFileSystemChunkManager::Size(const std::string& filepath) {
+    if (azure_delegate_) {
+        return azure_delegate_->Size(filepath);
+    }
+    LatencyObserver observer(
+        milvus::monitor::internal_storage_request_latency_stat);
+    auto size = GetObjectSize(filepath);
+    if (!size.ok()) {
+        milvus::monitor::internal_storage_op_count_stat_fail.Increment();
+        ThrowArrowStorageError("Size", filepath, size.status());
+    }
+    milvus::monitor::internal_storage_op_count_stat_suc.Increment();
+    return *size;
+}
+
+bool
+ArrowFileSystemChunkManager::Exist(const std::string& filepath) {
+    if (azure_delegate_) {
+        return azure_delegate_->Exist(filepath);
+    }
+    LatencyObserver observer(
+        milvus::monitor::internal_storage_request_latency_stat);
+    auto size = GetObjectSize(filepath);
+    if (!size.ok() && !IsArrowNotFound(size.status())) {
+        milvus::monitor::internal_storage_op_count_stat_fail.Increment();
+        ThrowArrowStorageError("Exist", filepath, size.status());
+    }
+    // A missing object is a successful existence check, not a failed stat.
+    milvus::monitor::internal_storage_op_count_stat_suc.Increment();
+    return size.ok();
+}
+
+std::vector<std::string>
+ArrowFileSystemChunkManager::ListWithPrefix(const std::string& filepath) {
+    if (azure_delegate_) {
+        return azure_delegate_->ListWithPrefix(filepath);
+    }
+    // FileSelector lists directories, while this interface accepts a raw byte
+    // prefix ("a/3" must match both "a/3" and "a/30"). List its parent and
+    // filter complete file keys. Production uses the separate bounded probe.
+    arrow::fs::FileSelector selector;
+    const auto slash = filepath.rfind('/');
+    selector.base_dir =
+        slash == std::string::npos ? "" : filepath.substr(0, slash);
+    selector.recursive = true;
+    selector.allow_not_found = false;
+    auto entries = fs_->GetFileInfo(selector);
+    if (!entries.ok()) {
+        if (arrow::internal::ErrnoFromStatus(entries.status()) == ENOENT &&
+            !milvus_storage::ExtendStatusDetail::UnwrapStatus(
+                entries.status())) {
+            return {};
+        }
+        ThrowArrowStorageError("ListWithPrefix", filepath, entries.status());
+    }
+    std::vector<std::string> paths;
+    for (const auto& entry : *entries) {
+        if (entry.IsFile() &&
+            entry.path().compare(0, filepath.size(), filepath) == 0) {
+            paths.push_back(entry.path());
+        }
+    }
+    return paths;
+}
+
+void
+ArrowFileSystemChunkManager::Remove(const std::string& filepath) {
+    if (azure_delegate_) {
+        azure_delegate_->Remove(filepath);
+        return;
+    }
+    LatencyObserver observer(
+        milvus::monitor::internal_storage_request_latency_remove);
+    const auto status = fs_->DeleteFile(filepath);
+    if (!status.ok() && !IsArrowNotFound(status)) {
+        milvus::monitor::internal_storage_op_count_remove_fail.Increment();
+        ThrowArrowStorageError("Remove", filepath, status);
+    }
+    milvus::monitor::internal_storage_op_count_remove_suc.Increment();
+}
+
+void
+ArrowFileSystemChunkManager::ThrowReadError(const std::string& path,
+                                            const arrow::Status& status) {
+    if (IsArrowNotFound(status)) {
+        ThrowArrowStorageError("Read", path, status);
+    }
+    // Retain the exact-object recheck for unclassified backend read failures.
+    // A failed recheck must not replace the original read error.
+    try {
+        if (!Exist(path)) {
+            throw SegcoreError(ObjectNotExist,
+                               fmt::format("Read[filepath:{}, errmessage:{}]",
+                                           path,
+                                           status.ToString()));
+        }
+    } catch (const SegcoreError& error) {
+        if (error.get_error_code() == ObjectNotExist) {
+            throw;
+        }
+    }
+    ThrowArrowStorageError("Read", path, status);
 }
 
 uint64_t
@@ -189,13 +294,10 @@ ArrowFileSystemChunkManager::Read(const std::string& filepath,
         milvus::monitor::internal_storage_request_latency_get);
     milvus::monitor::internal_storage_kv_size_get.Observe(size);
 
-    // The Arrow filesystem is rooted at the bucket, so filepath maps 1:1 to the
-    // delegate's object key -- the data plane and control plane hit the same
-    // object.
     auto file = fs_->OpenInputFile(filepath);
     if (!file.ok()) {
         milvus::monitor::internal_storage_op_count_get_fail.Increment();
-        ThrowReadError(delegate_, "Read", filepath, file.status());
+        ThrowReadError(filepath, file.status());
     }
     uint64_t total = 0;
     while (total < size) {
@@ -203,7 +305,7 @@ ArrowFileSystemChunkManager::Read(const std::string& filepath,
             (*file)->Read(size - total, static_cast<uint8_t*>(buf) + total);
         if (!read.ok()) {
             milvus::monitor::internal_storage_op_count_get_fail.Increment();
-            ThrowReadError(delegate_, "Read", filepath, read.status());
+            ThrowReadError(filepath, read.status());
         }
         if (*read == 0) {
             break;
@@ -213,7 +315,7 @@ ArrowFileSystemChunkManager::Read(const std::string& filepath,
     auto close_status = (*file)->Close();
     if (!close_status.ok()) {
         milvus::monitor::internal_storage_op_count_get_fail.Increment();
-        ThrowReadError(delegate_, "Read", filepath, close_status);
+        ThrowReadError(filepath, close_status);
     }
     milvus::monitor::internal_storage_op_count_get_suc.Increment();
     return total;

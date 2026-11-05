@@ -56,9 +56,7 @@ set(MILVUS_TEST_FILES
         test_sealed.cpp
         test_storage.cpp
         test_s3_endpoint_auth.cpp
-        test_minio_endpoint_auth.cpp
         test_plugin_loader.cpp
-        test_gcp_chunk_manager.cpp
         test_string_expr.cpp
         test_rust_result.cpp
         test_storage_v2_index_raw_data.cpp
@@ -151,13 +149,6 @@ if ( NOT (INDEX_ENGINE STREQUAL "cardinal") )
     list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "KmeansClusteringTest\\.cpp$")
 endif()
 
-# need update aws-sdk-cpp, see more from https://github.com/aws/aws-sdk-cpp/issues/1757.
-# now we always remove this file from MILVUS_TEST_FILES thus it is never compiled.
-# once done, compile this test file only if `BUILD_DISK_ANN STREQUAL "ON"`.
-# if ( BUILD_DISK_ANN STREQUAL "OFF" )
-    list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "MinioChunkManagerTest\\.cpp$")
-# endif()
-
 # bitset has its own test binary
 list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "BitsetTest\\.cpp$")
 
@@ -174,15 +165,8 @@ else()
     list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "AzureChunkManagerTest\\.cpp$")
     list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "AzureBlobChunkManagerTest\\.cpp$")
 endif()
-# need update aws-sdk-cpp, see more from https://github.com/aws/aws-sdk-cpp/issues/2119
-# once done, move this line to the else branch of `if (DEFINED AZURE_BUILD_DIR)`
-list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "RemoteChunkManagerTest\\.cpp$")
-
-# ArrowFileSystemChunkManagerRemoteTest needs a live object store (MinIO); the
-# cpp-ut environment has none (MINIO_ADDRESS points at the docker-compose
-# `minio` service, unresolvable there), so keep it out of all_tests like the
-# real-object-storage tests above.
-list(FILTER MILVUS_TEST_FILES EXCLUDE REGEX "ArrowFileSystemChunkManagerRemoteTest\\.cpp$")
+# Remote FS tests require MILVUS_TEST_REMOTE_FS=1 (CI may set MINIO_ADDRESS
+# without providing a live server). An opted-in test must fail on probe errors.
 
 if (ENABLE_GCP_NATIVE)
     add_definitions(-DENABLE_GCP_NATIVE)

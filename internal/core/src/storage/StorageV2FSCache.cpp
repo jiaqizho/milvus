@@ -29,6 +29,17 @@ StorageV2FSCache::Instance() {
 
 milvus_storage::ArrowFileSystemPtr
 StorageV2FSCache::Get(const Key& key) {
+    auto result = GetWithStatus(key);
+    if (!result.ok()) {
+        LOG_WARN("create arrow file system failed, error: {}",
+                 result.status().ToString());
+        return nullptr;
+    }
+    return *result;
+}
+
+arrow::Result<milvus_storage::ArrowFileSystemPtr>
+StorageV2FSCache::GetWithStatus(const Key& key) {
     // Convert Key to api::Properties and delegate to FilesystemCache
     // This ensures all filesystems are managed by a single cache with metrics support
     milvus_storage::api::Properties props;
@@ -91,16 +102,11 @@ StorageV2FSCache::Get(const Key& key) {
         fs_root_path,
         key.storage_type);
 
-    auto result = milvus_storage::FilesystemCache::getInstance().get(props, "");
-
-    if (!result.ok()) {
-        LOG_WARN("create arrow file system failed, error: {}",
-                 result.status().ToString());
-        return nullptr;
-    }
+    ARROW_ASSIGN_OR_RAISE(
+        auto fs, milvus_storage::FilesystemCache::getInstance().get(props, ""));
 
     LOG_INFO("StorageV2FSCache::Get: got filesystem successfully");
-    return result.ValueOrDie();
+    return fs;
 }
 
 }  // namespace milvus::storage

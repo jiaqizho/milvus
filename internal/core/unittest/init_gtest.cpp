@@ -97,10 +97,7 @@ main(int argc, char** argv) {
     // Initialize expression function factory (registers aggregate functions like count, sum, min, max)
     InitExecExpressionFunctionFactory();
 
-    // Test-suite master switch: MILVUS_USE_ARROW_FS_CHUNK_MANAGER=1 runs
-    // every test that obtains a chunk manager via CreateChunkManager (the
-    // remote chunk manager singleton below, DataGen, indexbuilder, ...) on
-    // the ArrowFileSystem backed IO path instead of the legacy one.
+    // The legacy switch now selects only Azure's optional FS adapter.
     if (auto* env = std::getenv("MILVUS_USE_ARROW_FS_CHUNK_MANAGER")) {
         std::string value(env);
         milvus::storage::SetUseArrowFileSystemChunkManager(value == "1" ||

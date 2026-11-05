@@ -71,7 +71,6 @@
 #include "storage/InsertData.h"
 #include "storage/LocalChunkManager.h"
 #include "storage/MemFileManagerImpl.h"
-#include "storage/minio/MinioChunkManager.h"
 #include "storage/RecordBatchSize.h"
 #include "storage/Types.h"
 #include "storage/Util.h"
@@ -176,26 +175,6 @@ NormalizeExternalArrowByType(const std::shared_ptr<arrow::Array>& array,
                              DataType element_type,
                              const FieldMeta& field_meta,
                              bool preserve_array_element_validity = false);
-
-enum class CloudProviderType : int8_t {
-    UNKNOWN = 0,
-    AWS = 1,
-    GCP = 2,
-    ALIYUN = 3,
-    AZURE = 4,
-    TENCENTCLOUD = 5,
-    GCPNATIVE = 6,
-    HUAWEICLOUD = 7,
-};
-
-std::map<std::string, CloudProviderType> CloudProviderType_Map = {
-    {"aws", CloudProviderType::AWS},
-    {"gcp", CloudProviderType::GCP},
-    {"aliyun", CloudProviderType::ALIYUN},
-    {"azure", CloudProviderType::AZURE},
-    {"tencent", CloudProviderType::TENCENTCLOUD},
-    {"gcpnative", CloudProviderType::GCPNATIVE},
-    {"huawei", CloudProviderType::HUAWEICLOUD}};
 
 // in arrow, null_bitmap read from the least significant bit
 std::vector<uint8_t>
@@ -1288,7 +1267,7 @@ static std::atomic<bool> use_arrow_fs_chunk_manager{false};
 void
 SetUseArrowFileSystemChunkManager(bool use) {
     use_arrow_fs_chunk_manager.store(use);
-    LOG_INFO("remote chunk manager backend set to {}",
+    LOG_INFO("Azure chunk manager backend set to {}",
              use ? "ArrowFileSystemChunkManager" : "legacy");
 }
 
@@ -1297,85 +1276,34 @@ UseArrowFileSystemChunkManager() {
     return use_arrow_fs_chunk_manager.load();
 }
 
-// Route a storage config to the ArrowFileSystem backed chunk manager when the
-// switch is on. milvus-storage owns provider-support classification: Make
-// returns nullptr for any config it has no producer for (unknown / empty /
-// gcpnative provider, or a rejected config), and CreateChunkManager then falls
-// back to the legacy chunk managers.
-static ChunkManagerPtr
-TryCreateArrowFileSystemChunkManager(const StorageConfig& storage_config) {
-    if (!UseArrowFileSystemChunkManager()) {
-        return nullptr;
-    }
-    return ArrowFileSystemChunkManager::Make(storage_config);
-}
-
-ChunkManagerPtr
-CreateLegacyChunkManager(const StorageConfig& storage_config) {
-    auto storage_type = ChunkManagerType_Map[storage_config.storage_type];
-    switch (storage_type) {
-        case ChunkManagerType::Local: {
-            return std::make_shared<LocalChunkManager>(
-                storage_config.root_path);
-        }
-        case ChunkManagerType::Minio: {
-            return std::make_shared<MinioChunkManager>(storage_config);
-        }
-        case ChunkManagerType::Remote: {
-            auto cloud_provider_type =
-                CloudProviderType_Map[storage_config.cloud_provider];
-            switch (cloud_provider_type) {
-                case CloudProviderType::AWS: {
-                    return std::make_shared<AwsChunkManager>(storage_config);
-                }
-                case CloudProviderType::GCP: {
-                    return std::make_shared<GcpChunkManager>(storage_config);
-                }
-                case CloudProviderType::ALIYUN: {
-                    return std::make_shared<AliyunChunkManager>(storage_config);
-                }
-                case CloudProviderType::TENCENTCLOUD: {
-                    return std::make_shared<TencentCloudChunkManager>(
-                        storage_config);
-                }
-                case CloudProviderType::HUAWEICLOUD: {
-                    return std::make_shared<HuaweiCloudChunkManager>(
-                        storage_config);
-                }
-#ifdef AZURE_BUILD_DIR
-                case CloudProviderType::AZURE: {
-                    return std::make_shared<AzureChunkManager>(storage_config);
-                }
-#endif
-#ifdef ENABLE_GCP_NATIVE
-                case CloudProviderType::GCPNATIVE: {
-                    return std::make_shared<GcpNativeChunkManager>(
-                        storage_config);
-                }
-#endif
-                default: {
-                    return std::make_shared<MinioChunkManager>(storage_config);
-                }
-            }
-        }
-        default: {
-            ThrowInfo(ConfigInvalid,
-                      "unsupported storage_config.storage_type {}",
-                      fmt::underlying(storage_type));
-        }
-    }
-}
-
 ChunkManagerPtr
 CreateChunkManager(const StorageConfig& storage_config) {
-    // The ArrowFileSystem backed chunk manager (when enabled) handles every
-    // storage type; try it once up front and fall back to the legacy managers
-    // when it declines (switch off, or no producer for the provider).
-    if (auto cm = TryCreateArrowFileSystemChunkManager(storage_config);
-        cm != nullptr) {
-        return cm;
+    const auto storage_type = ChunkManagerType_Map[storage_config.storage_type];
+    if (storage_type == ChunkManagerType::Local) {
+        return std::make_shared<LocalChunkManager>(storage_config.root_path);
     }
-    return CreateLegacyChunkManager(storage_config);
+    if (storage_type != ChunkManagerType::Minio &&
+        storage_type != ChunkManagerType::Remote) {
+        ThrowInfo(ConfigInvalid,
+                  "unsupported storage type {}",
+                  storage_config.storage_type);
+    }
+    if (storage_type == ChunkManagerType::Remote) {
+#ifdef ENABLE_GCP_NATIVE
+        if (storage_config.cloud_provider == "gcpnative") {
+            return std::make_shared<GcpNativeChunkManager>(storage_config);
+        }
+#endif
+#ifdef AZURE_BUILD_DIR
+        if (storage_config.cloud_provider == "azure" &&
+            !UseArrowFileSystemChunkManager()) {
+            return std::make_shared<AzureChunkManager>(storage_config);
+        }
+#endif
+    }
+    // The S3 managers have been retired. FS creation/probe errors propagate;
+    // there is no second client to fall back to.
+    return ArrowFileSystemChunkManager::Make(storage_config);
 }
 
 StorageV2FSCache::Key

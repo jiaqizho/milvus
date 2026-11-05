@@ -519,18 +519,8 @@ ReleaseArrowUnused();
 ChunkManagerPtr
 CreateChunkManager(const StorageConfig& storage_config);
 
-// Build a legacy chunk manager (LocalChunkManager / the AWS-SDK based
-// MinioChunkManager family) for this storage config, bypassing the
-// ArrowFileSystem switch. Used both as the fallback inside CreateChunkManager
-// and as the remote control-plane delegate of ArrowFileSystemChunkManager.
-ChunkManagerPtr
-CreateLegacyChunkManager(const StorageConfig& storage_config);
-
-// Process-wide switch selecting the remote ChunkManager backend built by
-// CreateChunkManager: legacy AWS-SDK based managers (default) vs the
-// milvus-storage ArrowFileSystem backed ArrowFileSystemChunkManager.
-// Delivered from Go via SetArrowFileSystemChunkManagerEnabled (storage_c.h),
-// sourced from `common.storage.useArrowFileSystemChunkManager`.
+// Retained for Azure's optional FS adapter. S3-compatible providers always
+// use milvus-storage; local and GCP Native retain their own managers.
 void
 SetUseArrowFileSystemChunkManager(bool use);
 

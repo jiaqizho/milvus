@@ -28,30 +28,20 @@
 #include "common/EasyAssert.h"
 #include "storage/ArrowFileSystemChunkManager.h"
 #include "storage/Types.h"
+#include "storage/Util.h"
 
 using namespace milvus::storage;
 
-// Real object-storage coverage for the remote hybrid against a live MinIO:
-// Write/Read go through the milvus-storage S3FileSystem data plane (multipart
-// upload finalize, arrow read); Exist/Size/ListWithPrefix/Remove go through the
-// legacy MinioChunkManager control-plane delegate (HeadObject stat, raw-prefix
-// ListObjects, idempotent DeleteObject); Read not-found is classified via the
-// delegate's exact-object existence. Make() also PreChecks the endpoint when it
-// builds the delegate.
-//
-// Like RemoteChunkManagerTest.cpp and MinioChunkManagerTest.cpp, this file is
-// EXCLUDED from the all_tests binary (see internal/core/unittest/CMakeLists.txt)
-// so the default cpp-ut run needs no object store. To run it, un-exclude the
-// file and build/run all_tests against a live MinIO -- e.g. inside the
-// docker-compose builder, where the `minio` service is reachable at
-// MINIO_ADDRESS (minio:9000) with the bucket below created. The test skips
-// (never fails) when MINIO_ADDRESS is unset or the endpoint is unreachable, so
-// it is safe to leave compiled in an environment that may or may not have MinIO.
+// Real object storage coverage. Explicit configuration must fail on connection
+// or startup-probe errors instead of silently skipping a broken FS backend.
 TEST(ArrowFileSystemChunkManagerRemote, MinioCRUD) {
-    const char* address = std::getenv("MINIO_ADDRESS");
-    if (address == nullptr || std::string(address).empty()) {
-        GTEST_SKIP() << "MINIO_ADDRESS not set, skip remote minio test";
+    const auto* enabled = std::getenv("MILVUS_TEST_REMOTE_FS");
+    if (enabled == nullptr || std::string(enabled) != "1") {
+        GTEST_SKIP() << "set MILVUS_TEST_REMOTE_FS=1 to run against MinIO";
     }
+    const char* address = std::getenv("MINIO_ADDRESS");
+    ASSERT_NE(address, nullptr);
+    ASSERT_FALSE(std::string(address).empty());
 
     StorageConfig config;
     config.storage_type = "remote";
@@ -64,17 +54,26 @@ TEST(ArrowFileSystemChunkManagerRemote, MinioCRUD) {
     config.useIAM = false;
     config.root_path = "files";
 
-    // Make() PreChecks the endpoint when it builds the legacy delegate; treat a
-    // connection failure (endpoint down, bucket absent) as "no environment" and
-    // skip rather than fail -- a genuine hybrid bug surfaces in the CRUD ops
-    // below, not in the connection PreCheck.
-    ChunkManagerPtr cm_ptr;
+    // A missing bucket and rejected credentials must fail at construction,
+    // even though an empty probe prefix in a valid bucket is accepted.
+    auto invalid = config;
+    invalid.bucket_name = "missing-fs-chunk-" + std::to_string(::getpid());
     try {
-        cm_ptr = ArrowFileSystemChunkManager::Make(config);
-    } catch (const std::exception& e) {
-        GTEST_SKIP() << "MinIO at " << address
-                     << " unreachable, skip remote minio test: " << e.what();
+        CreateChunkManager(invalid);
+        FAIL() << "missing bucket must fail the startup probe";
+    } catch (const milvus::SegcoreError& error) {
+        EXPECT_EQ(error.get_error_code(), milvus::ErrorCode::ObjectNotExist);
     }
+    invalid = config;
+    invalid.access_key_id = "invalid-fs-chunk-key";
+    try {
+        CreateChunkManager(invalid);
+        FAIL() << "invalid credentials must fail the startup probe";
+    } catch (const milvus::SegcoreError& error) {
+        EXPECT_EQ(error.get_error_code(), milvus::ErrorCode::StorageError);
+    }
+
+    auto cm_ptr = CreateChunkManager(config);
     ASSERT_NE(cm_ptr, nullptr);
     auto& cm = *cm_ptr;
     EXPECT_EQ(cm.GetName(), "ArrowFileSystemChunkManager");
@@ -82,17 +81,30 @@ TEST(ArrowFileSystemChunkManagerRemote, MinioCRUD) {
 
     // pid-scoped prefix so concurrent/repeat runs don't collide; the Arrow
     // filesystem is rooted at the bucket, so this same key addresses the object
-    // on both the data plane (Arrow) and the control-plane delegate (raw key).
+    // for every operation.
     std::string prefix = "arrow_fs_cm_ut/" + std::to_string(::getpid()) + "/";
     std::string path = prefix + "insert_log/1/2/3";
     uint8_t data[5] = {0x17, 0x32, 0x00, 0x34, 0x23};
+
+    auto compatibility_config = config;
+    compatibility_config.storage_type = "minio";
+    compatibility_config.cloud_provider = "";
+    const auto compatibility_cm = CreateChunkManager(compatibility_config);
+    EXPECT_EQ(compatibility_cm->GetName(), "ArrowFileSystemChunkManager");
+
+    const auto empty_path = prefix + "empty";
+    cm.Write(empty_path, data, 0);
+    EXPECT_TRUE(cm.Exist(empty_path));
+    EXPECT_EQ(cm.Size(empty_path), 0);
+    cm.Remove(empty_path);
+    EXPECT_FALSE(cm.Exist(prefix.substr(0, prefix.size() - 1)));
 
     // clean any leftovers from a previous crashed run under this pid
     for (const auto& p : cm.ListWithPrefix(prefix)) {
         cm.Remove(p);
     }
 
-    // Write (Arrow data plane) -> Exist/Size (delegate control plane)
+    // Write, Exist, Size, and Read all use the same filesystem.
     EXPECT_FALSE(cm.Exist(path));
     cm.Write(path, data, sizeof(data));
     EXPECT_TRUE(cm.Exist(path));
@@ -109,7 +121,7 @@ TEST(ArrowFileSystemChunkManagerRemote, MinioCRUD) {
     cm.Write(path, data2, sizeof(data2));
     EXPECT_EQ(cm.Size(path), sizeof(data2));
 
-    // raw-prefix ListObjects (delegate), returning full object keys. A second
+    // Raw-prefix listing returns complete keys. A second
     // object whose key extends the first (".../3" vs ".../30") pins the raw
     // byte-prefix semantics: a prefix ending mid-segment matches both, which a
     // directory-style FileSelector would miss (buqian review #1).
@@ -145,8 +157,7 @@ TEST(ArrowFileSystemChunkManagerRemote, MinioCRUD) {
     // Remove of a missing object is swallowed (idempotent), matching legacy
     EXPECT_NO_THROW(cm.Remove(prefix + "not/exist"));
 
-    // Remove (delegate) is a single idempotent DeleteObject; the object is gone
-    // on both planes afterwards
+    // Remove remains idempotent through the FS adapter.
     cm.Remove(path);
     EXPECT_FALSE(cm.Exist(path));
     cm.Remove(path2);
